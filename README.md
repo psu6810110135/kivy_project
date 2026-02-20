@@ -1,4 +1,4 @@
-# Marfusha x Vampire Survivors (Kivy 2.5D Shooter)
+# Shooter Game Project (Kivy 2.5D Shooter)
 
 เอกสารนี้สรุปภาพรวมแนวคิด, ระบบหลัก, รายชื่อฟังก์ชันสำคัญ และแผนพัฒนาทีละเฟส สำหรับเกมแนว Defense Shooter + Horde Survival ที่สร้างด้วย Kivy
 
