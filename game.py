@@ -3,7 +3,7 @@ from typing import Set
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
-from kivy.graphics import Color, Rectangle
+from kivy.graphics import Color, Rectangle, Line
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
@@ -23,7 +23,10 @@ class GameWidget(Widget):
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
         self.pressed_keys: Set[str] = set()
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
+        self.pos_label = Label(text="", halign="right", valign="top")
+        self.debug_mode = False
         self.add_widget(self.debug_label)
+        self.add_widget(self.pos_label)
 
         Clock.schedule_interval(self.update, 1 / 60)
 
@@ -33,7 +36,11 @@ class GameWidget(Widget):
             self._keyboard = None
 
     def _on_key_down(self, keyboard, keycode, text, modifiers):
-        self.pressed_keys.add(keycode[1])
+        key = keycode[1]
+        if key == '9':
+            self.debug_mode = not self.debug_mode
+            return True
+        self.pressed_keys.add(key)
         return True
 
     def _on_key_up(self, keyboard, keycode):
@@ -56,11 +63,20 @@ class GameWidget(Widget):
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
             for entity in self.entities:
                 entity.draw(self.canvas)
+            if self.debug_mode:
+                Color(1, 0, 0, 0.8)
+                Line(rectangle=(self.player.x, self.player.y, self.player.size[0], self.player.size[1]), width=2)
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
         info = f"FPS: {fps:.1f}\nEntities: {len(self.entities)}"
         self.debug_label.text = info
+        # Position overlay top-right when debug mode is on
+        if self.debug_mode:
+            self.pos_label.text = f"Player: ({self.player.x:.1f}, {self.player.y:.1f})"
+            self.pos_label.pos = (self.width - 220, self.height - 40)
+        else:
+            self.pos_label.text = ""
 
     def on_size(self, *args):
         # Ensure player remains in bounds when window resizes
