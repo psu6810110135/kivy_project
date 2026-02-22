@@ -6,7 +6,6 @@ from kivy.core.window import Window
 from kivy.graphics import Color, PopMatrix, PushMatrix, Rectangle, Scale
 from kivy.vector import Vector
 
-
 @dataclass
 class Entity:
     pos: Vector
@@ -28,40 +27,56 @@ class Entity:
     def move(self, delta: Vector):
         self.pos = self.pos + delta
 
+class BulletEntity(Entity):
+    """Simple projectile that moves in the direction the player was facing."""
+    def __init__(self, pos: Vector, direction: int):
+        super().__init__(pos=pos, size=(20, 5), color=(1, 1, 0))
+        self.direction = direction
+        self.speed = 800
+
+    def update(self, dt: float):
+        self.move(Vector(self.direction * self.speed * dt, 0))
+
+    def draw(self, canvas):
+        with canvas:
+            Color(*self.color)
+            Rectangle(pos=self.pos, size=self.size)
 
 class PlayerEntity(Entity):
-    """Sprite-based player that supports idle/walk with facing flip."""
+    """Sprite-based player that supports idle/walk/run and a specific shot sequence."""
 
     def __init__(self, pos: Vector, asset_path: str = "game_picture/player/Soldier_1"):
         self.asset_path = asset_path
         self.animations: Dict[str, List] = {}
         self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
+        
+        # Load standard animations
         self._load_animation("idle", "Idle", 7)
         self._load_animation("walk", "Walk", 7)
         self._load_animation("run", "Run", 8)
+        
+        # Load specific shooting sequence: Shot_3, Shot_4, Shot_5
+        self.animations["shoot"] = []
+        for idx in [3, 4, 5]:
+            path = f"{self.asset_path}/Shot_{idx}.png"
+            self.animations["shoot"].append(CoreImage(path).texture)
 
-        # Scale sprite so its height is 1/3 of the current window height
         base_texture = self.animations["idle"][0]
         target_height = Window.height / 3
         scale = target_height / base_texture.height
         width = base_texture.width * scale
         height = base_texture.height * scale
-        self.animations["shoot"] = []
-        for i in [3, 4, 5]:
-            path = f"{self.asset_path}/Shot_{i}.png"
-            self.animations["shoot"].append(CoreImage(path).texture)
-        
-        self.is_shooting = False
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
         self.current_anim = "idle"
         self.current_frame = 0
         self.frame_timer = 0.0
-        self.animation_speed = 0.1  # seconds per frame
+        self.animation_speed = 0.1 
         self.facing = 1
-        self.speed = 240  # units per second
-        self.run_speed = 420  # faster when holding shift
+        self.speed = 240  
+        self.run_speed = 420
+        self.is_shooting = False
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -72,55 +87,39 @@ class PlayerEntity(Entity):
                 texture = CoreImage(path).texture
                 frames.append(texture)
                 bboxes.append(self._compute_bbox(texture))
-            except Exception as exc:  # pragma: no cover - runtime asset load
+            except Exception as exc:
                 print(f"Failed to load {path}: {exc}")
         if frames:
             self.animations[name] = frames
             self.anim_bboxes[name] = bboxes
 
     def _compute_bbox(self, texture) -> Tuple[float, float, float, float]:
-        """Compute tight alpha bbox normalized to texture size."""
         w, h = texture.size
-        pixels = texture.pixels  # RGBA bytes
+        pixels = texture.pixels
         min_x, min_y = w, h
         max_x, max_y = -1, -1
         for y in range(h):
             row_start = y * w * 4
             for x in range(w):
                 alpha = pixels[row_start + x * 4 + 3]
-                if alpha > 10:  # ignore very transparent pixels
-                    if x < min_x:
-                        min_x = x
-                    if y < min_y:
-                        min_y = y
-                    if x > max_x:
-                        max_x = x
-                    if y > max_y:
-                        max_y = y
-
-        if max_x == -1:  # fallback to full texture
-            return (0.0, 0.0, 1.0, 1.0)
-
-        return (
-            min_x / w,
-            min_y / h,
-            (max_x - min_x + 1) / w,
-            (max_y - min_y + 1) / h,
-        )
+                if alpha > 10:
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+        if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
+        return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
 
     def update(self, dt: float, pressed_keys: set, bounds: Tuple[float, float]):
-        """Update movement and animation based on input and keep within bounds."""
         move_vec = Vector(0, 0)
-        if "w" in pressed_keys:
-            move_vec += Vector(0, 1)
-        if "s" in pressed_keys:
-            move_vec += Vector(0, -1)
-        if "a" in pressed_keys:
-            move_vec += Vector(-1, 0)
-        if "d" in pressed_keys:
-            move_vec += Vector(1, 0)
+        if "w" in pressed_keys: move_vec += Vector(0, 1)
+        if "s" in pressed_keys: move_vec += Vector(0, -1)
+        if "a" in pressed_keys: move_vec += Vector(-1, 0)
+        if "d" in pressed_keys: move_vec += Vector(1, 0)
 
         prev_anim = self.current_anim
+        
+        # Logic to lock animation during shooting sequence
         if self.is_shooting:
             self.current_anim = "shoot"
         elif move_vec.length() > 0:
@@ -132,44 +131,28 @@ class PlayerEntity(Entity):
         if self.current_anim != prev_anim:
             self.current_frame = 0
             self.frame_timer = 0.0
-        if move_vec.length() > 0:
-            self.facing = 1 if move_vec.x >= 0 else -1
-            self.current_anim = "run" if "shift" in pressed_keys else "walk"
-        else:
-            self.current_anim = "idle"
 
-        if self.current_anim != prev_anim:
-            self.current_frame = 0
-            self.frame_timer = 0.0
-
-        # Movement speed (shift = run)
         speed = self.run_speed if "shift" in pressed_keys else self.speed
-
-        # Apply movement and clamp to widget bounds
         if move_vec.length() > 0:
             self.pos = self.pos + move_vec.normalize() * (speed * dt)
+        
+        # Boundary Clamping
         max_x = max(0, bounds[0] - self.size[0])
-
-        # Vertical bounds: split height into 10 parts; block top 3 and bottom 1
         height = bounds[1]
         block_unit = height / 10.0
-        min_y = block_unit  # bottom 1/10 blocked
-        max_y_allowed = height - (3 * block_unit) - self.size[1]  # top 3/10 blocked
-
+        min_y, max_y_allowed = block_unit, height - (3 * block_unit) - self.size[1]
         self.pos.x = max(0, min(self.pos.x, max_x))
         self.pos.y = max(min_y, min(self.pos.y, max_y_allowed))
 
-        # Advance animation frames
         frames = self.animations.get(self.current_anim, [])
-        if not frames:
-            return None
+        if not frames: return None
 
         self.frame_timer += dt
         if self.frame_timer >= self.animation_speed:
             self.frame_timer = 0.0
             new_frame = self.current_frame + 1
             
-            # Special logic for shooting: stop when the 3-frame sequence ends
+            # Reset shooting state once the 3-frame sequence finishes
             if self.current_anim == "shoot" and new_frame >= len(frames):
                 self.is_shooting = False
                 self.current_anim = "idle"
@@ -180,60 +163,25 @@ class PlayerEntity(Entity):
         return frames[self.current_frame]
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        """Return per-frame alpha-based hitbox (x, y, width, height)."""
         bboxes = self.anim_bboxes.get(self.current_anim)
-        if not bboxes:
-            return (self.pos.x, self.pos.y, self.size[0], self.size[1])
-
+        if not bboxes: return (self.pos.x, self.pos.y, self.size[0], self.size[1])
         bbox = bboxes[self.current_frame % len(bboxes)]
         bx, by, bw, bh = bbox
-
-        if self.facing == 1:
-            offset_x = bx * self.size[0]
-        else:
-            # Mirror horizontally when facing left
-            offset_x = (1 - (bx + bw)) * self.size[0]
-
-        # Flip Y from texture space (top-left origin) to Kivy space (bottom-left origin)
+        offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
-        return (
-            self.pos.x + offset_x,
-            self.pos.y + offset_y,
-            bw * self.size[0],
-            bh * self.size[1],
-        )
+        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
 
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]
-        if texture is None:
-            return
-
+        if texture is None: return
         x, y = self.pos.x, self.pos.y
-        if self.facing == -1:
-            with canvas:
-                Color(1, 1, 1, 1)
+        with canvas:
+            Color(1, 1, 1, 1)
+            if self.facing == -1:
                 PushMatrix()
-                # Flip horizontally around sprite center
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)
                 Scale(x=-1, y=1, origin=origin)
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
                 PopMatrix()
-        else:
-            with canvas:
-                Color(1, 1, 1, 1)
+            else:
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
-class BulletEntity(Entity):
-    def __init__(self, pos: Vector, direction: int):
-        # Small yellow rectangle for the bullet
-        super().__init__(pos=pos, size=(20, 5), color=(1, 1, 0))
-        self.direction = direction
-        self.speed = 800  # Bullet speed
-
-    def update(self, dt: float):
-        # Move bullet based on direction (facing)
-        self.move(Vector(self.direction * self.speed * dt, 0))
-
-    def draw(self, canvas):
-        with canvas:
-            Color(*self.color)
-            Rectangle(pos=self.pos, size=self.size)
