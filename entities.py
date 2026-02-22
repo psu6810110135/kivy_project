@@ -127,7 +127,7 @@ class PlayerEntity(Entity):
             self.current_frame = 0
             self.frame_timer = 0.0
 
-        speed = self.run_speed if "shift" in pressed_keys else self.speed
+        speed = self.speed if self.is_shooting else (self.run_speed if "shift" in pressed_keys else self.speed)
         if move_vec.length() > 0:
             self.pos = self.pos + move_vec.normalize() * (speed * dt)
         
