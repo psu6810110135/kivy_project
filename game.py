@@ -44,22 +44,8 @@ class GameWidget(Widget):
         self._update_debug(dt)
 
     def _update_player(self, dt: float):
-        speed = 240 * dt  # basic movement speed
-        move_vec = Vector(0, 0)
-        if "w" in self.pressed_keys:
-            move_vec += Vector(0, speed)
-        if "s" in self.pressed_keys:
-            move_vec += Vector(0, -speed)
-        if "a" in self.pressed_keys:
-            move_vec += Vector(-speed, 0)
-        if "d" in self.pressed_keys:
-            move_vec += Vector(speed, 0)
-
-        # clamp to window bounds
-        new_pos = self.player.pos + move_vec
-        new_pos.x = max(0, min(new_pos.x, self.width - self.player.size[0]))
-        new_pos.y = max(0, min(new_pos.y, self.height - self.player.size[1]))
-        self.player.pos = new_pos
+        # Update sprite movement/animation using current pressed keys and widget bounds
+        self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
     def _draw_scene(self):
         self.canvas.clear()
