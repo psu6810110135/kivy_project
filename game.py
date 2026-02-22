@@ -8,7 +8,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 
-from entities import PlayerEntity
+from entities import BulletEntity, PlayerEntity
 
 
 class GameWidget(Widget):

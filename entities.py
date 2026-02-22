@@ -46,6 +46,12 @@ class PlayerEntity(Entity):
         scale = target_height / base_texture.height
         width = base_texture.width * scale
         height = base_texture.height * scale
+        self.animations["shoot"] = []
+        for i in [3, 4, 5]:
+            path = f"{self.asset_path}/Shot_{i}.png"
+            self.animations["shoot"].append(CoreImage(path).texture)
+        
+        self.is_shooting = False
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
@@ -115,6 +121,17 @@ class PlayerEntity(Entity):
             move_vec += Vector(1, 0)
 
         prev_anim = self.current_anim
+        if self.is_shooting:
+            self.current_anim = "shoot"
+        elif move_vec.length() > 0:
+            self.facing = 1 if move_vec.x >= 0 else -1
+            self.current_anim = "run" if "shift" in pressed_keys else "walk"
+        else:
+            self.current_anim = "idle"
+
+        if self.current_anim != prev_anim:
+            self.current_frame = 0
+            self.frame_timer = 0.0
         if move_vec.length() > 0:
             self.facing = 1 if move_vec.x >= 0 else -1
             self.current_anim = "run" if "shift" in pressed_keys else "walk"
@@ -150,7 +167,15 @@ class PlayerEntity(Entity):
         self.frame_timer += dt
         if self.frame_timer >= self.animation_speed:
             self.frame_timer = 0.0
-            self.current_frame = (self.current_frame + 1) % len(frames)
+            new_frame = self.current_frame + 1
+            
+            # Special logic for shooting: stop when the 3-frame sequence ends
+            if self.current_anim == "shoot" and new_frame >= len(frames):
+                self.is_shooting = False
+                self.current_anim = "idle"
+                self.current_frame = 0
+            else:
+                self.current_frame = new_frame % len(frames)
 
         return frames[self.current_frame]
 
