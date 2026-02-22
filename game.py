@@ -52,8 +52,7 @@ class GameWidget(Widget):
         if touch.button == 'left':
             self.player.start_shooting()
             self.firing = True
-            self.fire_timer = 0.0
-            self._spawn_bullet()
+            self.fire_timer = 0.0  # require hold; first shot after fire_rate
             return True
         return super().on_touch_down(touch)
 
@@ -71,7 +70,7 @@ class GameWidget(Widget):
         if self.firing:
             self.fire_timer += dt
             if self.fire_timer >= self.fire_rate:
-                self.fire_timer = 0.0
+                self.fire_timer -= self.fire_rate
                 self._spawn_bullet()
         
         # Update and clean up bullets
