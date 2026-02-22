@@ -197,3 +197,5 @@ class PlayerEntity(Entity):
             with canvas:
                 Color(1, 1, 1, 1)
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
+class BulletEntity(Entity):
+    pass
