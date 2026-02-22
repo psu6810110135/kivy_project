@@ -86,9 +86,15 @@ class PlayerEntity(Entity):
         # Apply movement and clamp to widget bounds
         self.pos = self.pos + move_vec
         max_x = max(0, bounds[0] - self.size[0])
-        max_y = max(0, bounds[1] - self.size[1])
+
+        # Vertical bounds: split height into 10 parts; block top 3 and bottom 1
+        height = bounds[1]
+        block_unit = height / 10.0
+        min_y = block_unit  # bottom 1/10 blocked
+        max_y_allowed = height - (3 * block_unit) - self.size[1]  # top 3/10 blocked
+
         self.pos.x = max(0, min(self.pos.x, max_x))
-        self.pos.y = max(0, min(self.pos.y, max_y))
+        self.pos.y = max(min_y, min(self.pos.y, max_y_allowed))
 
         # Advance animation frames
         frames = self.animations.get(self.current_anim, [])
