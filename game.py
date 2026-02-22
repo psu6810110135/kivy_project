@@ -21,6 +21,9 @@ class GameWidget(Widget):
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
         self.pos_label = Label(text="", halign="right", valign="top")
         self.debug_mode = False
+        self.fire_rate = 0.15  # seconds between shots while holding
+        self.fire_timer = 0.0
+        self.firing = False
         self.add_widget(self.debug_label)
         self.add_widget(self.pos_label)
 
@@ -47,27 +50,29 @@ class GameWidget(Widget):
 
     def on_touch_down(self, touch):
         if touch.button == 'left':
-            # Start shooting and spawn one bullet per click
             self.player.start_shooting()
-            bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
-            offset_x = -35
-            if self.player.facing == 1:
-                bx = self.player.pos.x + self.player.size[0] + offset_x
-            else:
-                bx = self.player.pos.x - offset_x
-            by = self.player.pos.y + self.player.size[1] * 0.38
-            self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
+            self.firing = True
+            self.fire_timer = 0.0
+            self._spawn_bullet()
             return True
         return super().on_touch_down(touch)
 
     def on_touch_up(self, touch):
         if touch.button == 'left':
             self.player.stop_shooting()
+            self.firing = False
             return True
         return super().on_touch_up(touch)
 
     def update(self, dt: float):
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+
+        # Handle continuous fire when holding left click
+        if self.firing:
+            self.fire_timer += dt
+            if self.fire_timer >= self.fire_rate:
+                self.fire_timer = 0.0
+                self._spawn_bullet()
         
         # Update and clean up bullets
         for b in self.bullets[:]:
@@ -105,6 +110,16 @@ class GameWidget(Widget):
             self.pos_label.pos = (self.width - 220, self.height - 40)
         else:
             self.pos_label.text = ""
+
+    def _spawn_bullet(self):
+        bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
+        offset_x = -35
+        if self.player.facing == 1:
+            bx = self.player.pos.x + self.player.size[0] + offset_x
+        else:
+            bx = self.player.pos.x - offset_x
+        by = self.player.pos.y + self.player.size[1] * 0.38
+        self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
 
     def on_size(self, *args):
         self.player.update(0, set(), (self.width, self.height))
