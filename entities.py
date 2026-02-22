@@ -35,6 +35,7 @@ class PlayerEntity(Entity):
     def __init__(self, pos: Vector, asset_path: str = "game_picture/player/Soldier_1"):
         self.asset_path = asset_path
         self.animations: Dict[str, List] = {}
+        self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
         self._load_animation("idle", "Idle", 7)
         self._load_animation("walk", "Walk", 7)
 
@@ -53,24 +54,51 @@ class PlayerEntity(Entity):
         self.animation_speed = 0.1  # seconds per frame
         self.facing = 1
         self.speed = 240  # units per second
-        
-        # Tighter hitbox for actual sprite content (excludes transparent padding)
-        self.hitbox_scale = 0.5  # sprite content is roughly 50% of texture width
-        self.hitbox_offset_x = width * 0.25  # center the hitbox
-        self.hitbox_offset_y = 0  # bottom aligned
-        self.hitbox_width = width * self.hitbox_scale
-        self.hitbox_height = height * 0.85  # sprite content height
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
+        bboxes: List[Tuple[float, float, float, float]] = []
         for idx in range(1, count + 1):
             path = f"{self.asset_path}/{prefix}{idx}.png"
             try:
-                frames.append(CoreImage(path).texture)
+                texture = CoreImage(path).texture
+                frames.append(texture)
+                bboxes.append(self._compute_bbox(texture))
             except Exception as exc:  # pragma: no cover - runtime asset load
                 print(f"Failed to load {path}: {exc}")
         if frames:
             self.animations[name] = frames
+            self.anim_bboxes[name] = bboxes
+
+    def _compute_bbox(self, texture) -> Tuple[float, float, float, float]:
+        """Compute tight alpha bbox normalized to texture size."""
+        w, h = texture.size
+        pixels = texture.pixels  # RGBA bytes
+        min_x, min_y = w, h
+        max_x, max_y = -1, -1
+        for y in range(h):
+            row_start = y * w * 4
+            for x in range(w):
+                alpha = pixels[row_start + x * 4 + 3]
+                if alpha > 10:  # ignore very transparent pixels
+                    if x < min_x:
+                        min_x = x
+                    if y < min_y:
+                        min_y = y
+                    if x > max_x:
+                        max_x = x
+                    if y > max_y:
+                        max_y = y
+
+        if max_x == -1:  # fallback to full texture
+            return (0.0, 0.0, 1.0, 1.0)
+
+        return (
+            min_x / w,
+            min_y / h,
+            (max_x - min_x + 1) / w,
+            (max_y - min_y + 1) / h,
+        )
 
     def update(self, dt: float, pressed_keys: set, bounds: Tuple[float, float]):
         """Update movement and animation based on input and keep within bounds."""
@@ -116,12 +144,27 @@ class PlayerEntity(Entity):
         return frames[self.current_frame]
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        """Return actual sprite hitbox (x, y, width, height) for collision/debug."""
+        """Return per-frame alpha-based hitbox (x, y, width, height)."""
+        bboxes = self.anim_bboxes.get(self.current_anim)
+        if not bboxes:
+            return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+
+        bbox = bboxes[self.current_frame % len(bboxes)]
+        bx, by, bw, bh = bbox
+
+        if self.facing == 1:
+            offset_x = bx * self.size[0]
+        else:
+            # Mirror horizontally when facing left
+            offset_x = (1 - (bx + bw)) * self.size[0]
+
+        # Flip Y from texture space (top-left origin) to Kivy space (bottom-left origin)
+        offset_y = (1 - (by + bh)) * self.size[1]
         return (
-            self.pos.x + self.hitbox_offset_x,
-            self.pos.y + self.hitbox_offset_y,
-            self.hitbox_width,
-            self.hitbox_height,
+            self.pos.x + offset_x,
+            self.pos.y + offset_y,
+            bw * self.size[0],
+            bh * self.size[1],
         )
 
     def draw(self, canvas):
