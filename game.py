@@ -33,25 +33,9 @@ class GameWidget(Widget):
 
     def _on_key_down(self, keyboard, keycode, text, modifiers):
         key = keycode[1]
-        
+
         if key == '9':
             self.debug_mode = not self.debug_mode
-            return True
-            
-        if key == 'spacebar' and not self.player.is_shooting:
-            # Trigger player shot animation
-            self.player.is_shooting = True
-            
-            # Spawn bullet
-            bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
-
-            offset_x = -35 
-            if self.player.facing == 1:
-                bx = self.player.pos.x + self.player.size[0] + offset_x
-            else:
-                bx = self.player.pos.x - offset_x
-            by = self.player.pos.y + self.player.size[1] * 0.38 # Adjust height to gun barrel
-            self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
             return True
 
         self.pressed_keys.add(key)
@@ -60,6 +44,27 @@ class GameWidget(Widget):
     def _on_key_up(self, keyboard, keycode):
         self.pressed_keys.discard(keycode[1])
         return True
+
+    def on_touch_down(self, touch):
+        if touch.button == 'left':
+            # Start shooting and spawn one bullet per click
+            self.player.start_shooting()
+            bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
+            offset_x = -35
+            if self.player.facing == 1:
+                bx = self.player.pos.x + self.player.size[0] + offset_x
+            else:
+                bx = self.player.pos.x - offset_x
+            by = self.player.pos.y + self.player.size[1] * 0.38
+            self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
+            return True
+        return super().on_touch_down(touch)
+
+    def on_touch_up(self, touch):
+        if touch.button == 'left':
+            self.player.stop_shooting()
+            return True
+        return super().on_touch_up(touch)
 
     def update(self, dt: float):
         self.player.update(dt, self.pressed_keys, (self.width, self.height))

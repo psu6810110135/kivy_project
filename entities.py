@@ -54,12 +54,7 @@ class PlayerEntity(Entity):
         self._load_animation("idle", "Idle", 7)
         self._load_animation("walk", "Walk", 7)
         self._load_animation("run", "Run", 8)
-        
-        # Load specific shooting sequence: Shot_3, Shot_4, Shot_5
-        self.animations["shoot"] = []
-        for idx in [3, 4, 5]:
-            path = f"{self.asset_path}/Shot_{idx}.png"
-            self.animations["shoot"].append(CoreImage(path).texture)
+        self._load_animation("shot", "Shot_", 5)
 
         base_texture = self.animations["idle"][0]
         target_height = Window.height / 3
@@ -74,8 +69,8 @@ class PlayerEntity(Entity):
         self.frame_timer = 0.0
         self.animation_speed = 0.1 
         self.facing = 1
-        self.speed = 240  
-        self.run_speed = 420
+        self.speed = 240  # units per second
+        self.run_speed = 420  # faster when holding shift
         self.is_shooting = False
 
     def _load_animation(self, name: str, prefix: str, count: int):
@@ -121,7 +116,7 @@ class PlayerEntity(Entity):
         
         # Logic to lock animation during shooting sequence
         if self.is_shooting:
-            self.current_anim = "shoot"
+            self.current_anim = "shot"
         elif move_vec.length() > 0:
             self.facing = 1 if move_vec.x >= 0 else -1
             self.current_anim = "run" if "shift" in pressed_keys else "walk"
@@ -145,22 +140,38 @@ class PlayerEntity(Entity):
         self.pos.y = max(min_y, min(self.pos.y, max_y_allowed))
 
         frames = self.animations.get(self.current_anim, [])
-        if not frames: return None
+        if not frames:
+            return None
 
         self.frame_timer += dt
         if self.frame_timer >= self.animation_speed:
             self.frame_timer = 0.0
-            new_frame = self.current_frame + 1
-            
-            # Reset shooting state once the 3-frame sequence finishes
-            if self.current_anim == "shoot" and new_frame >= len(frames):
-                self.is_shooting = False
-                self.current_anim = "idle"
-                self.current_frame = 0
+            if self.current_anim == "shot" and self.is_shooting and len(frames) >= 5:
+                # Loop frames 3-5 (index 2-4)
+                if self.current_frame < 2 or self.current_frame > 4:
+                    self.current_frame = 2
+                else:
+                    self.current_frame += 1
+                    if self.current_frame > 4:
+                        self.current_frame = 2
             else:
-                self.current_frame = new_frame % len(frames)
+                self.current_frame = (self.current_frame + 1) % len(frames)
 
         return frames[self.current_frame]
+
+    def start_shooting(self):
+        # Loop frames 3-5 (index 2-4) of Shot animation
+        if "shot" in self.animations:
+            self.is_shooting = True
+            self.current_anim = "shot"
+            self.current_frame = 2
+            self.frame_timer = 0.0
+
+    def stop_shooting(self):
+        if self.is_shooting:
+            self.is_shooting = False
+            self.current_anim = "idle"
+            self.current_frame = 0
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
         bboxes = self.anim_bboxes.get(self.current_anim)
