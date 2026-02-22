@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from kivy.core.image import Image as CoreImage
+from kivy.core.window import Window
 from kivy.graphics import Color, PopMatrix, PushMatrix, Rectangle, Scale
 from kivy.vector import Vector
 
@@ -37,9 +38,10 @@ class PlayerEntity(Entity):
         self._load_animation("idle", "Idle", 7)
         self._load_animation("walk", "Walk", 7)
 
-        # Use idle frame size as base display size, scaled up a bit for visibility
+        # Scale sprite so its height is 1/3 of the current window height
         base_texture = self.animations["idle"][0]
-        scale = 1.8
+        target_height = Window.height / 3
+        scale = target_height / base_texture.height
         width = base_texture.width * scale
         height = base_texture.height * scale
 
