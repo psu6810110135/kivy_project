@@ -65,7 +65,8 @@ class GameWidget(Widget):
                 entity.draw(self.canvas)
             if self.debug_mode:
                 Color(1, 0, 0, 0.8)
-                Line(rectangle=(self.player.x, self.player.y, self.player.size[0], self.player.size[1]), width=2)
+                hx, hy, hw, hh = self.player.get_hitbox()
+                Line(rectangle=(hx, hy, hw, hh), width=2)
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0

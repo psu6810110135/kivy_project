@@ -53,6 +53,13 @@ class PlayerEntity(Entity):
         self.animation_speed = 0.1  # seconds per frame
         self.facing = 1
         self.speed = 240  # units per second
+        
+        # Tighter hitbox for actual sprite content (excludes transparent padding)
+        self.hitbox_scale = 0.5  # sprite content is roughly 50% of texture width
+        self.hitbox_offset_x = width * 0.25  # center the hitbox
+        self.hitbox_offset_y = 0  # bottom aligned
+        self.hitbox_width = width * self.hitbox_scale
+        self.hitbox_height = height * 0.85  # sprite content height
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -107,6 +114,15 @@ class PlayerEntity(Entity):
             self.current_frame = (self.current_frame + 1) % len(frames)
 
         return frames[self.current_frame]
+
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        """Return actual sprite hitbox (x, y, width, height) for collision/debug."""
+        return (
+            self.pos.x + self.hitbox_offset_x,
+            self.pos.y + self.hitbox_offset_y,
+            self.hitbox_width,
+            self.hitbox_height,
+        )
 
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]
