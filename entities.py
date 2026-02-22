@@ -38,6 +38,7 @@ class PlayerEntity(Entity):
         self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
         self._load_animation("idle", "Idle", 7)
         self._load_animation("walk", "Walk", 7)
+        self._load_animation("run", "Run", 8)
 
         # Scale sprite so its height is 1/3 of the current window height
         base_texture = self.animations["idle"][0]
@@ -54,6 +55,7 @@ class PlayerEntity(Entity):
         self.animation_speed = 0.1  # seconds per frame
         self.facing = 1
         self.speed = 240  # units per second
+        self.run_speed = 420  # faster when holding shift
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -104,22 +106,31 @@ class PlayerEntity(Entity):
         """Update movement and animation based on input and keep within bounds."""
         move_vec = Vector(0, 0)
         if "w" in pressed_keys:
-            move_vec += Vector(0, self.speed * dt)
+            move_vec += Vector(0, 1)
         if "s" in pressed_keys:
-            move_vec += Vector(0, -self.speed * dt)
+            move_vec += Vector(0, -1)
         if "a" in pressed_keys:
-            move_vec += Vector(-self.speed * dt, 0)
+            move_vec += Vector(-1, 0)
         if "d" in pressed_keys:
-            move_vec += Vector(self.speed * dt, 0)
+            move_vec += Vector(1, 0)
 
+        prev_anim = self.current_anim
         if move_vec.length() > 0:
             self.facing = 1 if move_vec.x >= 0 else -1
-            self.current_anim = "walk"
+            self.current_anim = "run" if "shift" in pressed_keys else "walk"
         else:
             self.current_anim = "idle"
 
+        if self.current_anim != prev_anim:
+            self.current_frame = 0
+            self.frame_timer = 0.0
+
+        # Movement speed (shift = run)
+        speed = self.run_speed if "shift" in pressed_keys else self.speed
+
         # Apply movement and clamp to widget bounds
-        self.pos = self.pos + move_vec
+        if move_vec.length() > 0:
+            self.pos = self.pos + move_vec.normalize() * (speed * dt)
         max_x = max(0, bounds[0] - self.size[0])
 
         # Vertical bounds: split height into 10 parts; block top 3 and bottom 1
