@@ -2,6 +2,7 @@ from typing import Set
 
 from kivy.clock import Clock
 from kivy.core.window import Window
+from kivy.core.image import Image as CoreImage
 from kivy.graphics import Color, Rectangle
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
@@ -17,6 +18,7 @@ class GameWidget(Widget):
         super().__init__(**kwargs)
         self.player = PlayerEntity(pos=Vector(100, 100))
         self.entities = [self.player]
+        self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
         self.pressed_keys: Set[str] = set()
@@ -50,8 +52,8 @@ class GameWidget(Widget):
     def _draw_scene(self):
         self.canvas.clear()
         with self.canvas:
-            Color(0.12, 0.12, 0.16)
-            Rectangle(pos=(0, 0), size=self.size)
+            Color(1, 1, 1, 1)
+            Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
             for entity in self.entities:
                 entity.draw(self.canvas)
 
