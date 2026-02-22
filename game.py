@@ -18,6 +18,7 @@ class GameWidget(Widget):
         super().__init__(**kwargs)
         self.player = PlayerEntity(pos=Vector(100, 100))
         self.entities = [self.player]
+        self.bullets = []
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
@@ -37,6 +38,13 @@ class GameWidget(Widget):
 
     def _on_key_down(self, keyboard, keycode, text, modifiers):
         key = keycode[1]
+        if key == 'spacebar':
+            bullet_x = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
+            bullet_y = self.player.pos.y + self.player.size[1] / 2
+            
+            new_bullet = BulletEntity(Vector(bullet_x, bullet_y), self.player.facing)
+            self.bullets.append(new_bullet)
+            return True
         if key == '9':
             self.debug_mode = not self.debug_mode
             return True
@@ -49,6 +57,10 @@ class GameWidget(Widget):
 
     def update(self, dt: float):
         self._update_player(dt)
+        for b in self.bullets[:]:
+            b.update(dt)
+            if b.pos.x < 0 or b.pos.x > self.width:
+                self.bullets.remove(b)
         self._draw_scene()
         self._update_debug(dt)
 
@@ -63,6 +75,8 @@ class GameWidget(Widget):
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
             for entity in self.entities:
                 entity.draw(self.canvas)
+            for b in self.bullets:
+                b.draw(self.canvas)
             if self.debug_mode:
                 Color(1, 0, 0, 0.8)
                 hx, hy, hw, hh = self.player.get_hitbox()
