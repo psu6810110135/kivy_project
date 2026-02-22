@@ -198,4 +198,17 @@ class PlayerEntity(Entity):
                 Color(1, 1, 1, 1)
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
 class BulletEntity(Entity):
-    pass
+    def __init__(self, pos: Vector, direction: int):
+        # Small yellow rectangle for the bullet
+        super().__init__(pos=pos, size=(20, 5), color=(1, 1, 0))
+        self.direction = direction
+        self.speed = 800  # Bullet speed
+
+    def update(self, dt: float):
+        # Move bullet based on direction (facing)
+        self.move(Vector(self.direction * self.speed * dt, 0))
+
+    def draw(self, canvas):
+        with canvas:
+            Color(*self.color)
+            Rectangle(pos=self.pos, size=self.size)
