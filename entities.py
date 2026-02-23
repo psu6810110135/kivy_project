@@ -37,6 +37,10 @@ class BulletEntity(Entity):
     def update(self, dt: float):
         self.move(Vector(self.direction * self.speed * dt, 0))
 
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        """Returns the bullet's hitbox as (x, y, width, height)"""
+        return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+
     def draw(self, canvas):
         with canvas:
             Color(*self.color)

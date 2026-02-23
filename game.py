@@ -95,10 +95,18 @@ class GameWidget(Widget):
             for b in self.bullets:
                 b.draw(self.canvas)
                 
+            # Debug hitboxes
             if self.debug_mode:
-                Color(1, 0, 0, 0.8)
+                # Player Hitbox
+                Color(1, 0, 0, 0.8) # Red for player
                 hx, hy, hw, hh = self.player.get_hitbox()
                 Line(rectangle=(hx, hy, hw, hh), width=2)
+                
+                # Bullet Hitboxes
+                Color(0, 1, 0, 0.8) # Green for bullets
+                for b in self.bullets:
+                    bx, by, bw, bh = b.get_hitbox()
+                    Line(rectangle=(bx, by, bw, bh), width=1)
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
