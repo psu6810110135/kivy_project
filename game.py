@@ -112,12 +112,12 @@ class GameWidget(Widget):
 
     def _spawn_bullet(self):
         bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
-        offset_x = -35
+        offset_x = -60
         if self.player.facing == 1:
             bx = self.player.pos.x + self.player.size[0] + offset_x
         else:
             bx = self.player.pos.x - offset_x
-        by = self.player.pos.y + self.player.size[1] * 0.38
+        by = self.player.pos.y + self.player.size[1] * 0.45
         self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
 
     def on_size(self, *args):
