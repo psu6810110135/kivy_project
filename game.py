@@ -12,6 +12,7 @@ from entities import PlayerEntity, BulletEntity, EnemyEntity
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
+    GAME_DURATION = 15 * 60  # 15 minutes in seconds
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -23,7 +24,8 @@ class GameWidget(Widget):
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
         self.spawn_timer = 0.0
-        self.spawn_interval = 2.0  # seconds between spawns
+        self.base_spawn_interval = 2.0  # Starting spawn interval
+        self.spawn_interval = self.base_spawn_interval
         self.bullets: List[BulletEntity] = []
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
@@ -35,6 +37,15 @@ class GameWidget(Widget):
         self.fire_rate = 0.15  # seconds between shots while holding
         self.fire_timer = 0.0
         self.firing = False
+
+        # Game timer
+        self.game_time = 0.0
+        self.time_speed_multiplier = 1.0  # Normal speed, can be increased in debug mode
+        self.timer_label = Label(text="15:00", font_size=48, halign="center", valign="middle")
+        self.timer_label.color = (1, 1, 1, 1)  # White
+        self.timer_label.bold = True
+        self.add_widget(self.timer_label)
+
         self.add_widget(self.debug_label)
         self.add_widget(self.pos_label)
 
@@ -50,11 +61,20 @@ class GameWidget(Widget):
 
         if key == '9':
             self.debug_mode = not self.debug_mode
+            if not self.debug_mode:
+                self.time_speed_multiplier = 1.0  # Reset speed when exiting debug mode
             return True
 
         if self.debug_mode and key in ('+', '='):
             # Spawn an extra enemy for testing
             self._spawn_enemy()
+            return True
+
+        if self.debug_mode and key == '-':
+            # Speed up time in debug mode (cycle through speeds)
+            speeds = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
+            current_idx = speeds.index(self.time_speed_multiplier) if self.time_speed_multiplier in speeds else 0
+            self.time_speed_multiplier = speeds[(current_idx + 1) % len(speeds)]
             return True
 
         self.pressed_keys.add(key)
@@ -80,6 +100,17 @@ class GameWidget(Widget):
         return super().on_touch_up(touch)
 
     def update(self, dt: float):
+        # Update game time (stop at max duration)
+        if self.game_time < self.GAME_DURATION:
+            self.game_time += dt * self.time_speed_multiplier
+            if self.game_time > self.GAME_DURATION:
+                self.game_time = self.GAME_DURATION
+
+            # Update spawn interval based on elapsed time (faster spawning over time)
+            # At 0:00 -> 2.0s interval, at 15:00 -> 0.5s interval
+            progress = self.game_time / self.GAME_DURATION  # 0.0 to 1.0
+            self.spawn_interval = self.base_spawn_interval - (progress * 1.5)  # 2.0 -> 0.5
+
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
         # Spawn enemies at left/right edges
@@ -190,25 +221,28 @@ class GameWidget(Widget):
         with self.canvas:
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
-            
+
             # Draw player
             self.player.draw(self.canvas)
 
             # Draw all enemies
             for enemy in self.enemies:
                 enemy.draw(self.canvas)
-            
+
             # Draw bullets
             for b in self.bullets:
                 b.draw(self.canvas)
-                
+
+            # Draw timer at top center
+            self._draw_timer()
+
             # Debug hitboxes
             if self.debug_mode:
                 # Player Hitbox
                 Color(1, 0, 0, 0.8) # Red for player
                 hx, hy, hw, hh = self.player.get_hitbox()
                 Line(rectangle=(hx, hy, hw, hh), width=2)
-                
+
                 # Bullet Hitboxes
                 Color(0, 1, 0, 0.8) # Green for bullets
                 for b in self.bullets:
@@ -227,9 +261,26 @@ class GameWidget(Widget):
                     px1, py1, px2, py2 = enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
 
+    def _draw_timer(self):
+        """Draw the timer text on the canvas at the top center."""
+        remaining = self.GAME_DURATION - self.game_time
+        minutes = int(remaining // 60)
+        seconds = int(remaining % 60)
+        self.timer_label.text = f"{minutes:02d}:{seconds:02d}"
+        self.timer_label.texture_update()
+        texture = self.timer_label.texture
+        if texture:
+            label_w, label_h = texture.size
+            x = (self.width - label_w) / 2
+            y = self.height - label_h - 20
+            Color(1, 1, 1, 1)
+            Rectangle(texture=texture, pos=(x, y), size=(label_w, label_h))
+
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
-        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}"
+        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}"
+        if self.debug_mode:
+            info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
         self.debug_label.text = info
         if self.debug_mode:
             self.pos_label.text = f"Player: ({self.player.x:.1f}, {self.player.y:.1f})"
