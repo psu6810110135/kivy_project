@@ -81,6 +81,7 @@ class GameWidget(Widget):
         player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
         for enemy in self.enemies[:]:
             enemy.update(dt, player_center, (self.width, self.height))
+            self._update_enemy_state(enemy)
 
         # Handle continuous fire when holding left click
         if self.firing:
@@ -97,6 +98,28 @@ class GameWidget(Widget):
                 
         self._draw_scene()
         self._update_debug(dt)
+
+    def _update_enemy_state(self, enemy: EnemyEntity):
+        """Trigger attack animation when enemy overlaps player; otherwise keep walking."""
+        pbox = (self.player.pos.x, self.player.pos.y, self.player.size[0], self.player.size[1])
+        ebox = (enemy.pos.x, enemy.pos.y, enemy.size[0], enemy.size[1])
+        if self._rects_intersect(pbox, ebox):
+            self._set_enemy_anim(enemy, "attack")
+        else:
+            self._set_enemy_anim(enemy, "walk")
+
+    @staticmethod
+    def _rects_intersect(a, b) -> bool:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        return not (ax + aw < bx or bx + bw < ax or ay + ah < by or by + bh < ay)
+
+    @staticmethod
+    def _set_enemy_anim(enemy: EnemyEntity, anim: str):
+        if enemy.current_anim != anim:
+            enemy.current_anim = anim
+            enemy.current_frame = 0
+            enemy.frame_timer = 0.0
 
     def _draw_scene(self):
         self.canvas.clear()

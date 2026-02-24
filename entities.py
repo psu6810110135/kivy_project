@@ -277,12 +277,13 @@ class EnemyEntity(Entity):
         # Update target to player position
         self.target_pos = player_pos
 
-        # Calculate direction to player
-        direction = self.target_pos - self.pos
+        # Calculate direction to player from enemy center
+        enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
+        direction = self.target_pos - enemy_center
         distance = direction.length()
 
         # Move toward player if not too close
-        if distance > 50:  # Stop when close to player
+        if distance > 10:  # Stop when close to player center
             move_vec = direction.normalize() * (self.speed * dt)
             self.pos = self.pos + move_vec
 
