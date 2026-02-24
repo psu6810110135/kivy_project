@@ -240,7 +240,7 @@ class GameWidget(Widget):
         if len(all_enemies) < 2:
             return
 
-        min_dist = 100  # Minimum distance between enemy centers (increased for better spacing)
+        min_dist = 140  # Minimum distance between enemy centers (more spacing to reduce clumping)
         cell_size = min_dist
 
         # Build spatial grid

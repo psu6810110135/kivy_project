@@ -386,7 +386,7 @@ class EnemyEntity(Entity):
         distance = direction.length()
 
         # Move toward player if not too close
-        if distance > 10:  # Stop when close to player center
+        if distance > 60:  # Get closer before stopping (like special enemies)
             move_vec = direction.normalize() * (self.speed * dt)
             self.pos = self.pos + move_vec
 
