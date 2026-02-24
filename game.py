@@ -77,9 +77,10 @@ class GameWidget(Widget):
             self.spawn_timer -= self.spawn_interval
             self._spawn_enemy()
 
-        # Update all enemies
+        # Update all enemies (target player's center for accurate pathing)
+        player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
         for enemy in self.enemies[:]:
-            enemy.update(dt, self.player.pos, (self.width, self.height))
+            enemy.update(dt, player_center, (self.width, self.height))
 
         # Handle continuous fire when holding left click
         if self.firing:
