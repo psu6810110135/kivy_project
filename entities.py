@@ -56,15 +56,16 @@ class EnemyProjectileEntity(Entity):
         if not isinstance(target_pos, Vector):
             target_pos = Vector(target_pos[0], target_pos[1]) if hasattr(target_pos, '__len__') else Vector(target_pos.x, target_pos.y)
 
-        super().__init__(pos=pos, size=(40, 40), color=(1, 0.5, 0))
+        super().__init__(pos=pos, size=(200, 200), color=(1, 0.5, 0))
 
         direction = target_pos - pos
         self.velocity = direction.normalize() * 400 if direction.length() > 0 else Vector(0, 0)
 
         self.fire_textures = fire_textures or []
-        self.current_frame = 0
+        self.current_frame = 3  # Start at frame 4 (0-indexed: 3)
         self.frame_timer = 0.0
         self.animation_speed = 0.05
+        self.hit = False  # Track if projectile has hit
 
     def update(self, dt: float):
         # Ensure velocity * dt returns a Vector
@@ -75,7 +76,8 @@ class EnemyProjectileEntity(Entity):
             self.frame_timer += dt
             if self.frame_timer >= self.animation_speed:
                 self.frame_timer = 0.0
-                self.current_frame = (self.current_frame + 1) % len(self.fire_textures)
+                # Loop frames 4-6 (indices 3-5)
+                self.current_frame = 3 + (self.current_frame - 3 + 1) % 3
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
         return (self.pos.x, self.pos.y, self.size[0], self.size[1])
@@ -424,7 +426,7 @@ class EnemyEntity(Entity):
         else:  # Facing left
             hand_x = self.pos.x
         
-        hand_y = self.pos.y + self.size[1] * 0.35
+        hand_y = self.pos.y + self.size[1] * 0.4
         return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
 
     def draw(self, canvas):
@@ -676,8 +678,8 @@ class SpecialEnemyEntity(Entity):
             # Shoot fire projectile
             if self.fire_timer >= self.fire_cooldown:
                 self.fire_timer = 0.0
-                # Spawn fireball from Kitsune's position toward player
-                fire_spawn_pos = enemy_center.copy()
+                # Spawn fireball centered on Kitsune (fireball is 200x200, so offset by 100)
+                fire_spawn_pos = Vector(enemy_center.x - 100, enemy_center.y - 100)
                 projectile_to_spawn = EnemyProjectileEntity(
                     pos=fire_spawn_pos,
                     target_pos=self.target_pos,
@@ -746,20 +748,20 @@ class SpecialEnemyEntity(Entity):
             else:  # Facing left, tail on right
                 tail_x = self.pos.x + self.size[0] * 0.7
             
-            tail_y = self.pos.y + self.size[1] * 0.5
+            tail_y = self.pos.y + self.size[1] * 0.1
             return (tail_x, tail_y, self.size[0] * tail_width, self.size[1] * tail_height)
-        
+
         # Red_Werewolf attacks with hand (front of sprite)
         if "Red_Werewolf" in self.asset_path:
             hand_width = 0.3
             hand_height = 0.3
-            
+
             if self.facing == 1:  # Facing right
                 hand_x = self.pos.x + self.size[0] * 0.7
             else:  # Facing left
                 hand_x = self.pos.x
-            
-            hand_y = self.pos.y + self.size[1] * 0.35
+
+            hand_y = self.pos.y + self.size[1] * 0.4
             return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
         
         return None

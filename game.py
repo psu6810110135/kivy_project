@@ -81,6 +81,21 @@ class GameWidget(Widget):
             self._spawn_enemy()
             return True
 
+        if self.debug_mode and key == '1':
+            # Spawn Gorgon (special enemy)
+            self._spawn_special_enemy_by_type("game_picture/special_enemy/Gorgon")
+            return True
+
+        if self.debug_mode and key == '2':
+            # Spawn Kitsune (special enemy)
+            self._spawn_special_enemy_by_type("game_picture/special_enemy/Kitsune")
+            return True
+
+        if self.debug_mode and key == '3':
+            # Spawn Red_Werewolf (special enemy)
+            self._spawn_special_enemy_by_type("game_picture/special_enemy/Red_Werewolf")
+            return True
+
         if self.debug_mode and key == '-':
             # Speed up time in debug mode (cycle through speeds)
             speeds = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
@@ -444,6 +459,25 @@ class GameWidget(Widget):
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
             asset_path=selected
+        ))
+
+    def _spawn_special_enemy_by_type(self, enemy_type: str):
+        """Spawn a specific special enemy type at random edge (for debug mode)."""
+        spawn_left = random.choice([True, False])
+
+        block_unit = self.height / 10.0
+        special_enemy_height = self.player.size[1] * 1.2
+        min_y = block_unit
+        max_y = self.height - (3 * block_unit) - special_enemy_height
+        max_y = max(min_y, max_y)
+        y_pos = random.uniform(min_y, max_y)
+
+        x_pos = 50 if spawn_left else self.width - 50
+
+        self.special_enemies.append(SpecialEnemyEntity(
+            pos=Vector(x_pos, y_pos),
+            player_size=self.player.size,
+            asset_path=enemy_type
         ))
 
     def on_size(self, *args):
