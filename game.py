@@ -11,8 +11,14 @@ from kivy.vector import Vector
 from entities import PlayerEntity, BulletEntity, EnemyEntity
 
 class GameWidget(Widget):
+    MAX_ENEMIES = 100  # Limit to prevent lag
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+        # Preload all enemy textures at startup to avoid runtime lag
+        EnemyEntity.preload_all_skins()
+
         self.player = PlayerEntity(pos=Vector(100, 100))
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
@@ -117,22 +123,49 @@ class GameWidget(Widget):
             self._set_enemy_anim(enemy, "walk")
 
     def _separate_enemies(self):
+        """Separate enemies using spatial grid for O(n) average performance."""
         if len(self.enemies) < 2:
             return
-        min_dist = 40
-        for i in range(len(self.enemies)):
-            for j in range(i + 1, len(self.enemies)):
-                e1 = self.enemies[i]
-                e2 = self.enemies[j]
-                c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
-                c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
-                delta = c2 - c1
-                dist = max(delta.length(), 0.001)
-                if dist < min_dist:
-                    push = (min_dist - dist) / 2
-                    move = delta.normalize() * push
-                    e1.pos -= move
-                    e2.pos += move
+
+        min_dist = 80  # Minimum distance between enemy centers
+        cell_size = min_dist
+
+        # Build spatial grid
+        grid = {}
+        for enemy in self.enemies:
+            cx = int((enemy.pos.x + enemy.size[0] / 2) / cell_size)
+            cy = int((enemy.pos.y + enemy.size[1] / 2) / cell_size)
+            key = (cx, cy)
+            if key not in grid:
+                grid[key] = []
+            grid[key].append(enemy)
+
+        # Only check enemies in same or adjacent cells
+        for (cx, cy), cell_enemies in grid.items():
+            # Check within same cell
+            for i in range(len(cell_enemies)):
+                for j in range(i + 1, len(cell_enemies)):
+                    self._push_apart(cell_enemies[i], cell_enemies[j], min_dist)
+
+            # Check adjacent cells (only right, down, and diagonals to avoid duplicate checks)
+            adjacent = [(cx + 1, cy), (cx, cy + 1), (cx + 1, cy + 1), (cx + 1, cy - 1)]
+            for adj_key in adjacent:
+                if adj_key in grid:
+                    for e1 in cell_enemies:
+                        for e2 in grid[adj_key]:
+                            self._push_apart(e1, e2, min_dist)
+
+    def _push_apart(self, e1, e2, min_dist):
+        """Push two enemies apart if they're too close."""
+        c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
+        c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
+        delta = c2 - c1
+        dist = max(delta.length(), 0.001)
+        if dist < min_dist:
+            push = (min_dist - dist) / 2
+            move = delta.normalize() * push
+            e1.pos -= move
+            e2.pos += move
 
     @staticmethod
     def _rects_intersect(a, b) -> bool:
@@ -216,6 +249,10 @@ class GameWidget(Widget):
 
     def _spawn_enemy(self):
         """Spawn enemy at random edge (left or right) within the player's walkable band."""
+        # Don't spawn if at max capacity
+        if len(self.enemies) >= self.MAX_ENEMIES:
+            return
+
         spawn_left = random.choice([True, False])
 
         # Keep spawn area aligned with player's allowed Y band to avoid unreachable spawns

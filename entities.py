@@ -205,67 +205,49 @@ class PlayerEntity(Entity):
 class EnemyEntity(Entity):
     """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
 
-    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = None):
-        if asset_path is None:
-            skins = [
-                "game_picture/enemy/Zombie_1",
-                "game_picture/enemy/Zombie_2",
-                "game_picture/enemy/Zombie_3",
-                "game_picture/enemy/Zombie_4",
-            ]
-            self.asset_path = random.choice(skins)
-        else:
-            self.asset_path = asset_path
-        self.animations: Dict[str, List] = {}
-        self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
+    # Class-level cache for textures and bounding boxes (shared across all instances)
+    _texture_cache: Dict[str, Dict[str, List]] = {}  # asset_path -> {anim_name: [textures]}
+    _bbox_cache: Dict[str, Dict[str, List[Tuple[float, float, float, float]]]] = {}  # asset_path -> {anim_name: [bboxes]}
+    _base_size_cache: Dict[str, Tuple[float, float]] = {}  # asset_path -> (width, height)
 
-        # Load animations for Zombie_1
-        self._load_animation("idle", "Idle", 6)
-        self._load_animation("walk", "Walk", 10)
-        self._load_animation("attack", "Attack", 5)
-        self._load_animation("hurt", "Hurt", 4)
-        self._load_animation("dead", "Dead", 5)
+    SKINS = [
+        "game_picture/enemy/Zombie_1",
+        "game_picture/enemy/Zombie_2",
+        "game_picture/enemy/Zombie_3",
+        "game_picture/enemy/Zombie_4",
+    ]
 
-        base_texture = self.animations["idle"][0]
+    @classmethod
+    def _load_animation_cached(cls, asset_path: str, name: str, prefix: str, count: int):
+        """Load animation textures once per asset_path and cache them."""
+        if asset_path not in cls._texture_cache:
+            cls._texture_cache[asset_path] = {}
+            cls._bbox_cache[asset_path] = {}
 
-        # Size relative to player if provided, otherwise fallback to window-based sizing
-        if player_size:
-            target_height = player_size[1] * scale_to_player
-        else:
-            target_height = Window.height / 3
+        if name in cls._texture_cache[asset_path]:
+            return  # Already cached
 
-        scale = target_height / base_texture.height
-        width = base_texture.width * scale
-        height = base_texture.height * scale
-
-        super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
-
-        self.current_anim = "walk"  # Start with walk animation
-        self.current_frame = 0
-        self.frame_timer = 0.0
-        self.animation_speed = 0.1
-        self.facing = -1  # Face left (toward player) by default
-        self.speed = 120  # Movement speed
-
-        # Path to player
-        self.target_pos: Vector = pos  # Will be updated to player position
-
-    def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
         bboxes: List[Tuple[float, float, float, float]] = []
         for idx in range(1, count + 1):
-            path = f"{self.asset_path}/{prefix}{idx}.png"
+            path = f"{asset_path}/{prefix}{idx}.png"
             try:
                 texture = CoreImage(path).texture
                 frames.append(texture)
-                bboxes.append(self._compute_bbox(texture))
+                bboxes.append(cls._compute_bbox_static(texture))
             except Exception as exc:
                 print(f"Failed to load {path}: {exc}")
-        if frames:
-            self.animations[name] = frames
-            self.anim_bboxes[name] = bboxes
 
-    def _compute_bbox(self, texture) -> Tuple[float, float, float, float]:
+        if frames:
+            cls._texture_cache[asset_path][name] = frames
+            cls._bbox_cache[asset_path][name] = bboxes
+            # Cache base size from first idle frame
+            if name == "idle" and asset_path not in cls._base_size_cache:
+                cls._base_size_cache[asset_path] = (frames[0].width, frames[0].height)
+
+    @staticmethod
+    def _compute_bbox_static(texture) -> Tuple[float, float, float, float]:
+        """Static version of bbox computation for caching."""
         w, h = texture.size
         pixels = texture.pixels
         min_x, min_y = w, h
@@ -281,6 +263,57 @@ class EnemyEntity(Entity):
                     if y > max_y: max_y = y
         if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
         return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
+
+    @classmethod
+    def preload_all_skins(cls):
+        """Preload all enemy skins at startup to avoid runtime lag."""
+        for skin in cls.SKINS:
+            cls._load_animation_cached(skin, "idle", "Idle", 6)
+            cls._load_animation_cached(skin, "walk", "Walk", 10)
+            cls._load_animation_cached(skin, "attack", "Attack", 5)
+            cls._load_animation_cached(skin, "hurt", "Hurt", 4)
+            cls._load_animation_cached(skin, "dead", "Dead", 5)
+
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = None):
+        if asset_path is None:
+            self.asset_path = random.choice(self.SKINS)
+        else:
+            self.asset_path = asset_path
+
+        # Load animations (uses cache if already loaded)
+        self._load_animation_cached(self.asset_path, "idle", "Idle", 6)
+        self._load_animation_cached(self.asset_path, "walk", "Walk", 10)
+        self._load_animation_cached(self.asset_path, "attack", "Attack", 5)
+        self._load_animation_cached(self.asset_path, "hurt", "Hurt", 4)
+        self._load_animation_cached(self.asset_path, "dead", "Dead", 5)
+
+        # Reference cached textures and bboxes
+        self.animations = self._texture_cache[self.asset_path]
+        self.anim_bboxes = self._bbox_cache[self.asset_path]
+
+        base_size = self._base_size_cache.get(self.asset_path, (100, 100))
+
+        # Size relative to player if provided, otherwise fallback to window-based sizing
+        if player_size:
+            target_height = player_size[1] * scale_to_player
+        else:
+            target_height = Window.height / 3
+
+        scale = target_height / base_size[1]
+        width = base_size[0] * scale
+        height = base_size[1] * scale
+
+        super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
+
+        self.current_anim = "walk"  # Start with walk animation
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.1
+        self.facing = -1  # Face left (toward player) by default
+        self.speed = 120  # Movement speed
+
+        # Path to player
+        self.target_pos: Vector = pos  # Will be updated to player position
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
         """Move toward player and advance animation frame."""
