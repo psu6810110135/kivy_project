@@ -1,4 +1,5 @@
 from typing import Set, List
+import random
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
@@ -7,12 +8,16 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 
-from entities import PlayerEntity, BulletEntity
+from entities import PlayerEntity, BulletEntity, EnemyEntity
 
 class GameWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.player = PlayerEntity(pos=Vector(100, 100))
+        # Enemies spawn at left/right edges
+        self.enemies: List[EnemyEntity] = []
+        self.spawn_timer = 0.0
+        self.spawn_interval = 2.0  # seconds between spawns
         self.bullets: List[BulletEntity] = []
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
@@ -41,6 +46,11 @@ class GameWidget(Widget):
             self.debug_mode = not self.debug_mode
             return True
 
+        if self.debug_mode and key in ('+', '='):
+            # Spawn an extra enemy for testing
+            self._spawn_enemy()
+            return True
+
         self.pressed_keys.add(key)
         return True
 
@@ -66,6 +76,21 @@ class GameWidget(Widget):
     def update(self, dt: float):
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
+        # Spawn enemies at left/right edges
+        self.spawn_timer += dt
+        if self.spawn_timer >= self.spawn_interval:
+            self.spawn_timer -= self.spawn_interval
+            self._spawn_enemy()
+
+        # Update all enemies (target player's center for accurate pathing)
+        player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
+        for enemy in self.enemies[:]:
+            enemy.update(dt, player_center, (self.width, self.height))
+            self._update_enemy_state(enemy)
+
+        # Light separation so enemies don't stack
+        self._separate_enemies()
+
         # Handle continuous fire when holding left click
         if self.firing:
             self.fire_timer += dt
@@ -82,6 +107,51 @@ class GameWidget(Widget):
         self._draw_scene()
         self._update_debug(dt)
 
+    def _update_enemy_state(self, enemy: EnemyEntity):
+        """Trigger attack animation when enemy overlaps player; otherwise keep walking."""
+        pbox = self._inflate_rect(self.player.get_hitbox(), 6)
+        ebox = self._inflate_rect(enemy.get_hitbox(), 6)
+        if self._rects_intersect(pbox, ebox):
+            self._set_enemy_anim(enemy, "attack")
+        else:
+            self._set_enemy_anim(enemy, "walk")
+
+    def _separate_enemies(self):
+        if len(self.enemies) < 2:
+            return
+        min_dist = 40
+        for i in range(len(self.enemies)):
+            for j in range(i + 1, len(self.enemies)):
+                e1 = self.enemies[i]
+                e2 = self.enemies[j]
+                c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
+                c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
+                delta = c2 - c1
+                dist = max(delta.length(), 0.001)
+                if dist < min_dist:
+                    push = (min_dist - dist) / 2
+                    move = delta.normalize() * push
+                    e1.pos -= move
+                    e2.pos += move
+
+    @staticmethod
+    def _rects_intersect(a, b) -> bool:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        return not (ax + aw < bx or bx + bw < ax or ay + ah < by or by + bh < ay)
+
+    @staticmethod
+    def _inflate_rect(rect, pad: float):
+        x, y, w, h = rect
+        return (x - pad, y - pad, w + pad * 2, h + pad * 2)
+
+    @staticmethod
+    def _set_enemy_anim(enemy: EnemyEntity, anim: str):
+        if enemy.current_anim != anim:
+            enemy.current_anim = anim
+            enemy.current_frame = 0
+            enemy.frame_timer = 0.0
+
     def _draw_scene(self):
         self.canvas.clear()
         with self.canvas:
@@ -90,6 +160,10 @@ class GameWidget(Widget):
             
             # Draw player
             self.player.draw(self.canvas)
+
+            # Draw all enemies
+            for enemy in self.enemies:
+                enemy.draw(self.canvas)
             
             # Draw bullets
             for b in self.bullets:
@@ -107,6 +181,18 @@ class GameWidget(Widget):
                 for b in self.bullets:
                     bx, by, bw, bh = b.get_hitbox()
                     Line(rectangle=(bx, by, bw, bh), width=1)
+
+                # Enemy Hitbox
+                Color(0, 0, 1, 0.8) # Blue for enemy
+                for enemy in self.enemies:
+                    ex, ey, ew, eh = enemy.get_hitbox()
+                    Line(rectangle=(ex, ey, ew, eh), width=2)
+
+                # Enemy Path to Player
+                Color(1, 1, 0, 0.8) # Yellow for path
+                for enemy in self.enemies:
+                    px1, py1, px2, py2 = enemy.get_path_points()
+                    Line(points=[px1, py1, px2, py2], width=2)
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
@@ -127,6 +213,27 @@ class GameWidget(Widget):
             bx = self.player.pos.x - offset_x
         by = self.player.pos.y + self.player.size[1] * 0.45
         self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
+
+    def _spawn_enemy(self):
+        """Spawn enemy at random edge (left or right) within the player's walkable band."""
+        spawn_left = random.choice([True, False])
+
+        # Keep spawn area aligned with player's allowed Y band to avoid unreachable spawns
+        block_unit = self.height / 10.0
+        enemy_height = self.player.size[1]  # Enemy is scaled to player size below
+        min_y = block_unit
+        max_y = self.height - (3 * block_unit) - enemy_height
+        max_y = max(min_y, max_y)  # Guard against small window sizes
+        y_pos = random.uniform(min_y, max_y)
+
+        x_pos = 50 if spawn_left else self.width - 50
+
+        # Spawn enemy with size relative to player (scale_to_player=1.0 = same size)
+        self.enemies.append(EnemyEntity(
+            pos=Vector(x_pos, y_pos),
+            player_size=self.player.size,
+            scale_to_player=1.0
+        ))
 
     def on_size(self, *args):
         self.player.update(0, set(), (self.width, self.height))

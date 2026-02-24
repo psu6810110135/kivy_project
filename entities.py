@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+import random
 
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
@@ -176,6 +177,153 @@ class PlayerEntity(Entity):
             self.is_shooting = False
             self.current_anim = "idle"
             self.current_frame = 0
+
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        bboxes = self.anim_bboxes.get(self.current_anim)
+        if not bboxes: return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+        bbox = bboxes[self.current_frame % len(bboxes)]
+        bx, by, bw, bh = bbox
+        offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
+        offset_y = (1 - (by + bh)) * self.size[1]
+        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+    def draw(self, canvas):
+        texture = self.animations.get(self.current_anim, [None])[self.current_frame]
+        if texture is None: return
+        x, y = self.pos.x, self.pos.y
+        with canvas:
+            Color(1, 1, 1, 1)
+            if self.facing == -1:
+                PushMatrix()
+                origin = (x + self.size[0] / 2, y + self.size[1] / 2)
+                Scale(x=-1, y=1, origin=origin)
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
+                PopMatrix()
+            else:
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
+
+class EnemyEntity(Entity):
+    """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
+
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = None):
+        if asset_path is None:
+            skins = [
+                "game_picture/enemy/Zombie_1",
+                "game_picture/enemy/Zombie_2",
+                "game_picture/enemy/Zombie_3",
+                "game_picture/enemy/Zombie_4",
+            ]
+            self.asset_path = random.choice(skins)
+        else:
+            self.asset_path = asset_path
+        self.animations: Dict[str, List] = {}
+        self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
+
+        # Load animations for Zombie_1
+        self._load_animation("idle", "Idle", 6)
+        self._load_animation("walk", "Walk", 10)
+        self._load_animation("attack", "Attack", 5)
+        self._load_animation("hurt", "Hurt", 4)
+        self._load_animation("dead", "Dead", 5)
+
+        base_texture = self.animations["idle"][0]
+
+        # Size relative to player if provided, otherwise fallback to window-based sizing
+        if player_size:
+            target_height = player_size[1] * scale_to_player
+        else:
+            target_height = Window.height / 3
+
+        scale = target_height / base_texture.height
+        width = base_texture.width * scale
+        height = base_texture.height * scale
+
+        super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
+
+        self.current_anim = "walk"  # Start with walk animation
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.1
+        self.facing = -1  # Face left (toward player) by default
+        self.speed = 120  # Movement speed
+
+        # Path to player
+        self.target_pos: Vector = pos  # Will be updated to player position
+
+    def _load_animation(self, name: str, prefix: str, count: int):
+        frames: List = []
+        bboxes: List[Tuple[float, float, float, float]] = []
+        for idx in range(1, count + 1):
+            path = f"{self.asset_path}/{prefix}{idx}.png"
+            try:
+                texture = CoreImage(path).texture
+                frames.append(texture)
+                bboxes.append(self._compute_bbox(texture))
+            except Exception as exc:
+                print(f"Failed to load {path}: {exc}")
+        if frames:
+            self.animations[name] = frames
+            self.anim_bboxes[name] = bboxes
+
+    def _compute_bbox(self, texture) -> Tuple[float, float, float, float]:
+        w, h = texture.size
+        pixels = texture.pixels
+        min_x, min_y = w, h
+        max_x, max_y = -1, -1
+        for y in range(h):
+            row_start = y * w * 4
+            for x in range(w):
+                alpha = pixels[row_start + x * 4 + 3]
+                if alpha > 10:
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+        if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
+        return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
+
+    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
+        """Move toward player and advance animation frame."""
+        # Update target to player position
+        self.target_pos = player_pos
+
+        # Calculate direction to player from enemy center
+        enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
+        direction = self.target_pos - enemy_center
+        distance = direction.length()
+
+        # Move toward player if not too close
+        if distance > 10:  # Stop when close to player center
+            move_vec = direction.normalize() * (self.speed * dt)
+            self.pos = self.pos + move_vec
+
+            # Update facing direction based on movement
+            if direction.x < 0:
+                self.facing = -1
+            else:
+                self.facing = 1
+
+        # Boundary clamping
+        self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
+        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+
+        # Advance animation frame
+        frames = self.animations.get(self.current_anim, [])
+        if not frames:
+            return
+
+        self.frame_timer += dt
+        if self.frame_timer >= self.animation_speed:
+            self.frame_timer = 0.0
+            self.current_frame = (self.current_frame + 1) % len(frames)
+
+    def get_path_points(self) -> Tuple[float, float, float, float]:
+        """Return start and end points for path visualization: (x1, y1, x2, y2)"""
+        center_x = self.pos.x + self.size[0] / 2
+        center_y = self.pos.y + self.size[1] / 2
+        target_x = self.target_pos.x
+        target_y = self.target_pos.y
+        return (center_x, center_y, target_x, target_y)
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
         bboxes = self.anim_bboxes.get(self.current_anim)
