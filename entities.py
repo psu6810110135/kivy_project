@@ -56,7 +56,7 @@ class EnemyProjectileEntity(Entity):
         if not isinstance(target_pos, Vector):
             target_pos = Vector(target_pos[0], target_pos[1]) if hasattr(target_pos, '__len__') else Vector(target_pos.x, target_pos.y)
 
-        super().__init__(pos=pos, size=(120, 120), color=(1, 0.5, 0))
+        super().__init__(pos=pos, size=(160, 160), color=(1, 0.5, 0))
 
         direction = target_pos - pos
         self.velocity = direction.normalize() * 450 if direction.length() > 0 else Vector(0, 0)
@@ -84,8 +84,8 @@ class EnemyProjectileEntity(Entity):
                 self.current_frame = 3 + (self.current_frame - 3 + 1) % 3
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        # Smaller hitbox centered on the fireball (60% of sprite size)
-        hitbox_size = self.size[0] * 0.6
+        # Hitbox centered on the fireball (95% of sprite size to fit visual)
+        hitbox_size = self.size[0] * 0.95
         offset = (self.size[0] - hitbox_size) / 2
         return (self.pos.x + offset, self.pos.y + offset, hitbox_size, hitbox_size)
 
@@ -693,8 +693,8 @@ class SpecialEnemyEntity(Entity):
             # Shoot fire projectile
             if self.fire_timer >= self.fire_cooldown:
                 self.fire_timer = 0.0
-                # Spawn fireball centered on Kitsune (fireball is 120x120, so offset by 60)
-                fire_spawn_pos = Vector(enemy_center.x - 60, enemy_center.y - 60)
+                # Spawn fireball centered on Kitsune (fireball is 160x160, so offset by 80)
+                fire_spawn_pos = Vector(enemy_center.x - 80, enemy_center.y - 80)
                 projectile_to_spawn = EnemyProjectileEntity(
                     pos=fire_spawn_pos,
                     target_pos=self.target_pos,
@@ -704,10 +704,10 @@ class SpecialEnemyEntity(Entity):
         else:
             # APPROACH: Move toward player to get into attack range
             self.ai_state = "approach"
-            if distance > 10:
+            if distance > 60:  # Get closer before stopping
                 move_vec = direction.normalize() * (self.speed * dt)
                 self.pos = self.pos + move_vec
-                
+
                 if direction.x < 0:
                     self.facing = -1
                 else:
