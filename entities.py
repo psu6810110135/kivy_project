@@ -47,6 +47,49 @@ class BulletEntity(Entity):
             Color(*self.color)
             Rectangle(pos=self.pos, size=self.size)
 
+class EnemyProjectileEntity(Entity):
+    """Projectile fired by enemies (e.g., Kitsune's fire)."""
+    def __init__(self, pos, target_pos, fire_textures: List = None):
+        # Ensure pos is a Vector
+        if not isinstance(pos, Vector):
+            pos = Vector(pos[0], pos[1]) if hasattr(pos, '__len__') else Vector(pos.x, pos.y)
+        if not isinstance(target_pos, Vector):
+            target_pos = Vector(target_pos[0], target_pos[1]) if hasattr(target_pos, '__len__') else Vector(target_pos.x, target_pos.y)
+
+        super().__init__(pos=pos, size=(40, 40), color=(1, 0.5, 0))
+
+        direction = target_pos - pos
+        self.velocity = direction.normalize() * 400 if direction.length() > 0 else Vector(0, 0)
+
+        self.fire_textures = fire_textures or []
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.05
+
+    def update(self, dt: float):
+        # Ensure velocity * dt returns a Vector
+        delta = Vector(self.velocity.x * dt, self.velocity.y * dt)
+        self.pos = self.pos + delta
+
+        if self.fire_textures:
+            self.frame_timer += dt
+            if self.frame_timer >= self.animation_speed:
+                self.frame_timer = 0.0
+                self.current_frame = (self.current_frame + 1) % len(self.fire_textures)
+
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+
+    def draw(self, canvas):
+        with canvas:
+            if self.fire_textures and len(self.fire_textures) > 0:
+                texture = self.fire_textures[self.current_frame]
+                Color(1, 1, 1, 1)
+                Rectangle(texture=texture, pos=self.pos, size=self.size)
+            else:
+                Color(*self.color)
+                Rectangle(pos=self.pos, size=self.size)
+
 class PlayerEntity(Entity):
     """Sprite-based player that supports idle/walk/run and a specific shot sequence."""
 
@@ -367,6 +410,23 @@ class EnemyEntity(Entity):
         offset_y = (1 - (by + bh)) * self.size[1]
         return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
 
+    def get_attack_hitbox(self) -> Tuple[float, float, float, float]:
+        """Returns the attack hitbox (hand area) for collision detection."""
+        if self.current_anim != "attack":
+            return None
+        
+        # Hand hitbox at front of sprite (normalized coordinates)
+        hand_width = 0.3
+        hand_height = 0.3
+        
+        if self.facing == 1:  # Facing right
+            hand_x = self.pos.x + self.size[0] * 0.7
+        else:  # Facing left
+            hand_x = self.pos.x
+        
+        hand_y = self.pos.y + self.size[1] * 0.35
+        return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
+
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]
         if texture is None: return
@@ -381,6 +441,7 @@ class EnemyEntity(Entity):
                 PopMatrix()
             else:
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
+
 class SpecialEnemyEntity(Entity):
     """Special enemy with enhanced stats: 1.5x speed, 1.2x size. Spawns every 3 minutes."""
 
@@ -522,15 +583,42 @@ class SpecialEnemyEntity(Entity):
         self.speed = 180  # 1.5x basic enemy speed (120 * 1.5 = 180)
 
         self.target_pos: Vector = pos
+        
+        # Kitsune AI state machine
+        self.ai_state = "approach"  # States: approach, ranged_attack, escape
+        self.escape_distance = 300  # Start escaping when player within 300px
+        self.attack_range = 500  # Shoot fire when player within 500px
+        self.fire_cooldown = 2.0  # Seconds between fire shots
+        self.fire_timer = 0.0
+        self.fire_textures = []  # Will be loaded for Kitsune
+        
+        # Load fire animation for Kitsune
+        if "Kitsune" in self.asset_path:
+            self._load_fire_animation()
+
+    def _load_fire_animation(self):
+        """Load Kitsune's fire projectile animation frames."""
+        for idx in range(1, 15):  # Fire_1.png to Fire_14.png
+            path = f"{self.asset_path}/Fire_{idx}.png"
+            try:
+                texture = CoreImage(path).texture
+                self.fire_textures.append(texture)
+            except Exception as exc:
+                print(f"Failed to load fire texture {path}: {exc}")
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
-        """Move toward player and advance animation frame."""
+        """Move toward player and advance animation frame. Kitsune has special AI behavior."""
         self.target_pos = player_pos
 
         enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
         direction = self.target_pos - enemy_center
         distance = direction.length()
 
+        # Kitsune AI state machine
+        if "Kitsune" in self.asset_path:
+            return self._update_kitsune_ai(dt, enemy_center, direction, distance, bounds)
+        
+        # Normal enemy behavior (Gorgon, Red_Werewolf)
         if distance > 10:
             move_vec = direction.normalize() * (self.speed * dt)
             self.pos = self.pos + move_vec
@@ -545,12 +633,82 @@ class SpecialEnemyEntity(Entity):
 
         frames = self.animations.get(self.current_anim, [])
         if not frames:
-            return
+            return None
 
         self.frame_timer += dt
         if self.frame_timer >= self.animation_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
+        
+        return None
+
+    def _update_kitsune_ai(self, dt: float, enemy_center: Vector, direction: Vector, distance: float, bounds: Tuple[float, float]):
+        """Kitsune AI: Ranged attack from distance, escape when player gets too close."""
+        projectile_to_spawn = None
+        
+        # Update fire cooldown
+        self.fire_timer += dt
+        
+        # State machine
+        if distance < self.escape_distance:
+            # ESCAPE: Run away from player
+            self.ai_state = "escape"
+            if distance > 0:
+                escape_direction = (enemy_center - self.target_pos).normalize()
+                self.pos = self.pos + escape_direction * (self.speed * dt)
+                
+                # Face away from player while escaping
+                if escape_direction.x < 0:
+                    self.facing = -1
+                else:
+                    self.facing = 1
+        
+        elif distance < self.attack_range:
+            # RANGED_ATTACK: Shoot fire at player
+            self.ai_state = "ranged_attack"
+            
+            # Face player
+            if direction.x < 0:
+                self.facing = -1
+            else:
+                self.facing = 1
+            
+            # Shoot fire projectile
+            if self.fire_timer >= self.fire_cooldown:
+                self.fire_timer = 0.0
+                # Spawn fireball from Kitsune's position toward player
+                fire_spawn_pos = enemy_center.copy()
+                projectile_to_spawn = EnemyProjectileEntity(
+                    pos=fire_spawn_pos,
+                    target_pos=self.target_pos,
+                    fire_textures=self.fire_textures
+                )
+        
+        else:
+            # APPROACH: Move toward player to get into attack range
+            self.ai_state = "approach"
+            if distance > 10:
+                move_vec = direction.normalize() * (self.speed * dt)
+                self.pos = self.pos + move_vec
+                
+                if direction.x < 0:
+                    self.facing = -1
+                else:
+                    self.facing = 1
+        
+        # Boundary clamping
+        self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
+        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        
+        # Advance animation frame
+        frames = self.animations.get(self.current_anim, [])
+        if frames:
+            self.frame_timer += dt
+            if self.frame_timer >= self.animation_speed:
+                self.frame_timer = 0.0
+                self.current_frame = (self.current_frame + 1) % len(frames)
+        
+        return projectile_to_spawn
 
     def get_path_points(self) -> Tuple[float, float, float, float]:
         """Return start and end points for path visualization: (x1, y1, x2, y2)"""
@@ -568,6 +726,43 @@ class SpecialEnemyEntity(Entity):
         offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
         return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+    def get_attack_hitbox(self) -> Tuple[float, float, float, float]:
+        """Returns attack hitbox based on enemy type: Gorgon (tail), Red_Werewolf (hand), Kitsune (None - ranged)."""
+        if self.current_anim != "attack":
+            return None
+        
+        # Kitsune is ranged - no melee attack hitbox
+        if "Kitsune" in self.asset_path:
+            return None
+        
+        # Gorgon attacks with tail (back of sprite)
+        if "Gorgon" in self.asset_path:
+            tail_width = 0.3
+            tail_height = 0.35
+            
+            if self.facing == 1:  # Facing right, tail on left
+                tail_x = self.pos.x
+            else:  # Facing left, tail on right
+                tail_x = self.pos.x + self.size[0] * 0.7
+            
+            tail_y = self.pos.y + self.size[1] * 0.5
+            return (tail_x, tail_y, self.size[0] * tail_width, self.size[1] * tail_height)
+        
+        # Red_Werewolf attacks with hand (front of sprite)
+        if "Red_Werewolf" in self.asset_path:
+            hand_width = 0.3
+            hand_height = 0.3
+            
+            if self.facing == 1:  # Facing right
+                hand_x = self.pos.x + self.size[0] * 0.7
+            else:  # Facing left
+                hand_x = self.pos.x
+            
+            hand_y = self.pos.y + self.size[1] * 0.35
+            return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
+        
+        return None
 
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]

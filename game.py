@@ -8,7 +8,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 
-from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity
+from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity, EnemyProjectileEntity
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
@@ -34,6 +34,10 @@ class GameWidget(Widget):
         self.special_spawn_timer = 0.0
         self.special_spawn_interval = 180.0  # 3 minutes in seconds
         self.last_special_types: List[str] = []  # Track last 2 types spawned
+        
+        # Enemy projectiles (Kitsune's fire)
+        self.enemy_projectiles: List[EnemyProjectileEntity] = []
+        
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
@@ -138,9 +142,11 @@ class GameWidget(Widget):
             enemy.update(dt, player_center, (self.width, self.height))
             self._update_enemy_state(enemy)
 
-        # Update all special enemies
+        # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
-            special_enemy.update(dt, player_center, (self.width, self.height))
+            projectile = special_enemy.update(dt, player_center, (self.width, self.height))
+            if projectile:  # Kitsune spawned a fire projectile
+                self.enemy_projectiles.append(projectile)
             self._update_enemy_state(special_enemy)
 
         # Light separation so enemies don't stack
@@ -158,17 +164,41 @@ class GameWidget(Widget):
             b.update(dt)
             if b.pos.x < 0 or b.pos.x > self.width:
                 self.bullets.remove(b)
+        
+        # Update and clean up enemy projectiles
+        for proj in self.enemy_projectiles[:]:
+            proj.update(dt)
+            # Check collision with player
+            pbox = self.player.get_hitbox()
+            proj_box = proj.get_hitbox()
+            if self._rects_intersect(pbox, proj_box):
+                # Hit player! (visual feedback only for now)
+                self.enemy_projectiles.remove(proj)
+                continue
+            # Remove if off-screen
+            if proj.pos.x < 0 or proj.pos.x > self.width or proj.pos.y < 0 or proj.pos.y > self.height:
+                self.enemy_projectiles.remove(proj)
                 
         self._draw_scene()
         self._update_debug(dt)
 
-    def _update_enemy_state(self, enemy: EnemyEntity):
-        """Trigger attack animation when enemy overlaps player; otherwise keep walking."""
+    def _update_enemy_state(self, enemy):
+        """Trigger attack animation when enemy's attack hitbox (hand/tail) touches player."""
         pbox = self._inflate_rect(self.player.get_hitbox(), 6)
+        
+        # Check if enemy is close enough to potentially attack
         ebox = self._inflate_rect(enemy.get_hitbox(), 6)
         if self._rects_intersect(pbox, ebox):
+            # Switch to attack animation
             self._set_enemy_anim(enemy, "attack")
+            
+            # Check if attack hitbox (hand/tail) actually touches player
+            attack_box = enemy.get_attack_hitbox()
+            if attack_box and self._rects_intersect(pbox, attack_box):
+                # Attack is hitting! (visual feedback only for now)
+                pass
         else:
+            # Not close enough, keep walking
             self._set_enemy_anim(enemy, "walk")
 
     def _separate_enemies(self):
@@ -256,6 +286,10 @@ class GameWidget(Widget):
             for b in self.bullets:
                 b.draw(self.canvas)
 
+            # Draw enemy projectiles
+            for proj in self.enemy_projectiles:
+                proj.draw(self.canvas)
+
             # Draw timer at top center
             self._draw_timer()
 
@@ -272,17 +306,37 @@ class GameWidget(Widget):
                     bx, by, bw, bh = b.get_hitbox()
                     Line(rectangle=(bx, by, bw, bh), width=1)
 
+                # Enemy Projectile Hitboxes
+                Color(1, 0.5, 0, 0.8) # Orange for enemy projectiles
+                for proj in self.enemy_projectiles:
+                    px, py, pw, ph = proj.get_hitbox()
+                    Line(rectangle=(px, py, pw, ph), width=1)
+
                 # Enemy Hitbox
                 Color(0, 0, 1, 0.8) # Blue for enemy
                 for enemy in self.enemies:
                     ex, ey, ew, eh = enemy.get_hitbox()
                     Line(rectangle=(ex, ey, ew, eh), width=2)
+                    
+                    # Enemy Attack Hitbox (hand)
+                    attack_box = enemy.get_attack_hitbox()
+                    if attack_box:
+                        Color(1, 1, 0, 0.8) # Yellow for attack hitbox
+                        ax, ay, aw, ah = attack_box
+                        Line(rectangle=(ax, ay, aw, ah), width=2)
 
                 # Special Enemy Hitbox
                 Color(1, 0, 1, 0.8) # Magenta for special enemy
                 for special_enemy in self.special_enemies:
                     ex, ey, ew, eh = special_enemy.get_hitbox()
                     Line(rectangle=(ex, ey, ew, eh), width=2)
+                    
+                    # Special Enemy Attack Hitbox (tail/hand)
+                    attack_box = special_enemy.get_attack_hitbox()
+                    if attack_box:
+                        Color(1, 0.5, 0, 0.8) # Orange for special attack hitbox
+                        ax, ay, aw, ah = attack_box
+                        Line(rectangle=(ax, ay, aw, ah), width=2)
 
                 # Enemy Path to Player
                 Color(1, 1, 0, 0.8) # Yellow for path
@@ -313,7 +367,7 @@ class GameWidget(Widget):
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
-        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}"
+        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
         if self.debug_mode:
             info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
         self.debug_label.text = info
