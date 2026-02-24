@@ -7,12 +7,13 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 
-from entities import PlayerEntity, BulletEntity
+from entities import PlayerEntity, BulletEntity, EnemyEntity
 
 class GameWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.player = PlayerEntity(pos=Vector(100, 100))
+        self.enemy = EnemyEntity(pos=Vector(self.width / 2, self.height / 2))
         self.bullets: List[BulletEntity] = []
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
@@ -65,6 +66,7 @@ class GameWidget(Widget):
 
     def update(self, dt: float):
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+        self.enemy.update(dt)
 
         # Handle continuous fire when holding left click
         if self.firing:
@@ -90,6 +92,9 @@ class GameWidget(Widget):
             
             # Draw player
             self.player.draw(self.canvas)
+
+            # Draw enemy
+            self.enemy.draw(self.canvas)
             
             # Draw bullets
             for b in self.bullets:

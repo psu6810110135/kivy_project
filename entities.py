@@ -200,3 +200,99 @@ class PlayerEntity(Entity):
                 PopMatrix()
             else:
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
+
+class EnemyEntity(Entity):
+    """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
+
+    def __init__(self, pos: Vector, asset_path: str = "game_picture/enemy/Zombie_1"):
+        self.asset_path = asset_path
+        self.animations: Dict[str, List] = {}
+        self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
+
+        # Load animations for Zombie_1
+        self._load_animation("idle", "Idle", 6)
+        self._load_animation("walk", "Walk", 10)
+        self._load_animation("attack", "Attack", 5)
+        self._load_animation("hurt", "Hurt", 4)
+        self._load_animation("dead", "Dead", 5)
+
+        base_texture = self.animations["idle"][0]
+        target_height = Window.height / 3
+        scale = target_height / base_texture.height
+        width = base_texture.width * scale
+        height = base_texture.height * scale
+
+        super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
+
+        self.current_anim = "idle"
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.1
+        self.facing = -1  # Face left (toward player) by default
+
+    def _load_animation(self, name: str, prefix: str, count: int):
+        frames: List = []
+        bboxes: List[Tuple[float, float, float, float]] = []
+        for idx in range(1, count + 1):
+            path = f"{self.asset_path}/{prefix}{idx}.png"
+            try:
+                texture = CoreImage(path).texture
+                frames.append(texture)
+                bboxes.append(self._compute_bbox(texture))
+            except Exception as exc:
+                print(f"Failed to load {path}: {exc}")
+        if frames:
+            self.animations[name] = frames
+            self.anim_bboxes[name] = bboxes
+
+    def _compute_bbox(self, texture) -> Tuple[float, float, float, float]:
+        w, h = texture.size
+        pixels = texture.pixels
+        min_x, min_y = w, h
+        max_x, max_y = -1, -1
+        for y in range(h):
+            row_start = y * w * 4
+            for x in range(w):
+                alpha = pixels[row_start + x * 4 + 3]
+                if alpha > 10:
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+        if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
+        return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
+
+    def update(self, dt: float):
+        """Advance animation frame."""
+        frames = self.animations.get(self.current_anim, [])
+        if not frames:
+            return
+
+        self.frame_timer += dt
+        if self.frame_timer >= self.animation_speed:
+            self.frame_timer = 0.0
+            self.current_frame = (self.current_frame + 1) % len(frames)
+
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        bboxes = self.anim_bboxes.get(self.current_anim)
+        if not bboxes: return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+        bbox = bboxes[self.current_frame % len(bboxes)]
+        bx, by, bw, bh = bbox
+        offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
+        offset_y = (1 - (by + bh)) * self.size[1]
+        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+    def draw(self, canvas):
+        texture = self.animations.get(self.current_anim, [None])[self.current_frame]
+        if texture is None: return
+        x, y = self.pos.x, self.pos.y
+        with canvas:
+            Color(1, 1, 1, 1)
+            if self.facing == -1:
+                PushMatrix()
+                origin = (x + self.size[0] / 2, y + self.size[1] / 2)
+                Scale(x=-1, y=1, origin=origin)
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
+                PopMatrix()
+            else:
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
