@@ -101,8 +101,8 @@ class GameWidget(Widget):
 
     def _update_enemy_state(self, enemy: EnemyEntity):
         """Trigger attack animation when enemy overlaps player; otherwise keep walking."""
-        pbox = (self.player.pos.x, self.player.pos.y, self.player.size[0], self.player.size[1])
-        ebox = (enemy.pos.x, enemy.pos.y, enemy.size[0], enemy.size[1])
+        pbox = self._inflate_rect(self.player.get_hitbox(), 6)
+        ebox = self._inflate_rect(enemy.get_hitbox(), 6)
         if self._rects_intersect(pbox, ebox):
             self._set_enemy_anim(enemy, "attack")
         else:
@@ -113,6 +113,11 @@ class GameWidget(Widget):
         ax, ay, aw, ah = a
         bx, by, bw, bh = b
         return not (ax + aw < bx or bx + bw < ax or ay + ah < by or by + bh < ay)
+
+    @staticmethod
+    def _inflate_rect(rect, pad: float):
+        x, y, w, h = rect
+        return (x - pad, y - pad, w + pad * 2, h + pad * 2)
 
     @staticmethod
     def _set_enemy_anim(enemy: EnemyEntity, anim: str):
