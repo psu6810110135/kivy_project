@@ -113,6 +113,11 @@ class GameWidget(Widget):
                     bx, by, bw, bh = b.get_hitbox()
                     Line(rectangle=(bx, by, bw, bh), width=1)
 
+                # Enemy Hitbox
+                Color(0, 0, 1, 0.8) # Blue for enemy
+                ex, ey, ew, eh = self.enemy.get_hitbox()
+                Line(rectangle=(ex, ey, ew, eh), width=2)
+
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
         info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}"
