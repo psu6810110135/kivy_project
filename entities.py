@@ -56,10 +56,14 @@ class EnemyProjectileEntity(Entity):
         if not isinstance(target_pos, Vector):
             target_pos = Vector(target_pos[0], target_pos[1]) if hasattr(target_pos, '__len__') else Vector(target_pos.x, target_pos.y)
 
-        super().__init__(pos=pos, size=(200, 200), color=(1, 0.5, 0))
+        super().__init__(pos=pos, size=(120, 120), color=(1, 0.5, 0))
 
         direction = target_pos - pos
-        self.velocity = direction.normalize() * 400 if direction.length() > 0 else Vector(0, 0)
+        self.velocity = direction.normalize() * 450 if direction.length() > 0 else Vector(0, 0)
+        
+        # Calculate rotation angle for proper orientation
+        import math
+        self.angle = math.degrees(math.atan2(self.velocity.y, self.velocity.x))
 
         self.fire_textures = fire_textures or []
         self.current_frame = 3  # Start at frame 4 (0-indexed: 3)
@@ -80,14 +84,25 @@ class EnemyProjectileEntity(Entity):
                 self.current_frame = 3 + (self.current_frame - 3 + 1) % 3
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+        # Smaller hitbox centered on the fireball (60% of sprite size)
+        hitbox_size = self.size[0] * 0.6
+        offset = (self.size[0] - hitbox_size) / 2
+        return (self.pos.x + offset, self.pos.y + offset, hitbox_size, hitbox_size)
 
     def draw(self, canvas):
         with canvas:
             if self.fire_textures and len(self.fire_textures) > 0:
                 texture = self.fire_textures[self.current_frame]
                 Color(1, 1, 1, 1)
+                
+                # Rotate fireball based on direction
+                PushMatrix()
+                from kivy.graphics import Rotate
+                center_x = self.pos.x + self.size[0] / 2
+                center_y = self.pos.y + self.size[1] / 2
+                Rotate(angle=self.angle, origin=(center_x, center_y))
                 Rectangle(texture=texture, pos=self.pos, size=self.size)
+                PopMatrix()
             else:
                 Color(*self.color)
                 Rectangle(pos=self.pos, size=self.size)
@@ -588,9 +603,9 @@ class SpecialEnemyEntity(Entity):
         
         # Kitsune AI state machine
         self.ai_state = "approach"  # States: approach, ranged_attack, escape
-        self.escape_distance = 300  # Start escaping when player within 300px
-        self.attack_range = 500  # Shoot fire when player within 500px
-        self.fire_cooldown = 2.0  # Seconds between fire shots
+        self.escape_distance = 250  # Start escaping when player within 250px
+        self.attack_range = 550  # Shoot fire when player within 550px
+        self.fire_cooldown = 1.5  # Seconds between fire shots (faster for more action)
         self.fire_timer = 0.0
         self.fire_textures = []  # Will be loaded for Kitsune
         
@@ -678,8 +693,8 @@ class SpecialEnemyEntity(Entity):
             # Shoot fire projectile
             if self.fire_timer >= self.fire_cooldown:
                 self.fire_timer = 0.0
-                # Spawn fireball centered on Kitsune (fireball is 200x200, so offset by 100)
-                fire_spawn_pos = Vector(enemy_center.x - 100, enemy_center.y - 100)
+                # Spawn fireball centered on Kitsune (fireball is 120x120, so offset by 60)
+                fire_spawn_pos = Vector(enemy_center.x - 60, enemy_center.y - 60)
                 projectile_to_spawn = EnemyProjectileEntity(
                     pos=fire_spawn_pos,
                     target_pos=self.target_pos,

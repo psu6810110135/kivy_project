@@ -187,34 +187,52 @@ class GameWidget(Widget):
             pbox = self.player.get_hitbox()
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
-                # Hit player! (visual feedback only for now)
+                # Hit player! Add visual feedback
+                if not hasattr(self, 'player_hit_flash'):
+                    self.player_hit_flash = 0.0
+                self.player_hit_flash = 0.3  # Flash for 0.3 seconds
                 self.enemy_projectiles.remove(proj)
                 continue
             # Remove if off-screen
             if proj.pos.x < 0 or proj.pos.x > self.width or proj.pos.y < 0 or proj.pos.y > self.height:
                 self.enemy_projectiles.remove(proj)
+        
+        # Update hit flash timer
+        if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
+            self.player_hit_flash -= dt
                 
         self._draw_scene()
         self._update_debug(dt)
 
     def _update_enemy_state(self, enemy):
         """Trigger attack animation when enemy's attack hitbox (hand/tail) touches player."""
-        pbox = self._inflate_rect(self.player.get_hitbox(), 6)
+        # Add hysteresis to prevent stuttering: use different thresholds for entering/exiting attack
+        if not hasattr(enemy, 'is_attacking'):
+            enemy.is_attacking = False
         
-        # Check if enemy is close enough to potentially attack
-        ebox = self._inflate_rect(enemy.get_hitbox(), 6)
-        if self._rects_intersect(pbox, ebox):
-            # Switch to attack animation
-            self._set_enemy_anim(enemy, "attack")
-            
-            # Check if attack hitbox (hand/tail) actually touches player
-            attack_box = enemy.get_attack_hitbox()
-            if attack_box and self._rects_intersect(pbox, attack_box):
-                # Attack is hitting! (visual feedback only for now)
-                pass
+        pbox = self.player.get_hitbox()
+        enemy_center = Vector(enemy.pos.x + enemy.size[0] / 2, enemy.pos.y + enemy.size[1] / 2)
+        player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
+        distance = (player_center - enemy_center).length()
+        
+        # Hysteresis thresholds to prevent stuttering
+        attack_enter_distance = 150  # Start attacking when within 150px
+        attack_exit_distance = 200   # Stop attacking when beyond 200px
+        
+        if enemy.is_attacking:
+            # Currently attacking - only stop if player moves far enough away
+            if distance > attack_exit_distance:
+                enemy.is_attacking = False
+                self._set_enemy_anim(enemy, "walk")
+            else:
+                self._set_enemy_anim(enemy, "attack")
         else:
-            # Not close enough, keep walking
-            self._set_enemy_anim(enemy, "walk")
+            # Currently walking - only start attacking if player is close enough
+            if distance < attack_enter_distance:
+                enemy.is_attacking = True
+                self._set_enemy_anim(enemy, "attack")
+            else:
+                self._set_enemy_anim(enemy, "walk")
 
     def _separate_enemies(self):
         """Separate enemies using spatial grid for O(n) average performance."""
@@ -222,7 +240,7 @@ class GameWidget(Widget):
         if len(all_enemies) < 2:
             return
 
-        min_dist = 80  # Minimum distance between enemy centers
+        min_dist = 100  # Minimum distance between enemy centers (increased for better spacing)
         cell_size = min_dist
 
         # Build spatial grid
@@ -286,8 +304,14 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
 
-            # Draw player
+            # Draw player with red flash if hit
+            if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
+                # Flash red when hit
+                Color(1, 0.3, 0.3, 1)
+            else:
+                Color(1, 1, 1, 1)
             self.player.draw(self.canvas)
+            Color(1, 1, 1, 1)  # Reset color
 
             # Draw all enemies
             for enemy in self.enemies:
