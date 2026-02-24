@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+import random
 
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
@@ -204,8 +205,17 @@ class PlayerEntity(Entity):
 class EnemyEntity(Entity):
     """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
 
-    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = "game_picture/enemy/Zombie_1"):
-        self.asset_path = asset_path
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = None):
+        if asset_path is None:
+            skins = [
+                "game_picture/enemy/Zombie_1",
+                "game_picture/enemy/Zombie_2",
+                "game_picture/enemy/Zombie_3",
+                "game_picture/enemy/Zombie_4",
+            ]
+            self.asset_path = random.choice(skins)
+        else:
+            self.asset_path = asset_path
         self.animations: Dict[str, List] = {}
         self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
 
