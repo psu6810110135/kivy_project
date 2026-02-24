@@ -13,7 +13,8 @@ class GameWidget(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.player = PlayerEntity(pos=Vector(100, 100))
-        self.enemy = EnemyEntity(pos=Vector(self.width / 2, self.height / 2))
+        # Spawn enemy at right edge of screen
+        self.enemy = EnemyEntity(pos=Vector(self.width - 100, self.height / 2))
         self.bullets: List[BulletEntity] = []
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
@@ -66,7 +67,7 @@ class GameWidget(Widget):
 
     def update(self, dt: float):
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
-        self.enemy.update(dt)
+        self.enemy.update(dt, self.player.pos, (self.width, self.height))
 
         # Handle continuous fire when holding left click
         if self.firing:
@@ -117,6 +118,11 @@ class GameWidget(Widget):
                 Color(0, 0, 1, 0.8) # Blue for enemy
                 ex, ey, ew, eh = self.enemy.get_hitbox()
                 Line(rectangle=(ex, ey, ew, eh), width=2)
+
+                # Enemy Path to Player
+                Color(1, 1, 0, 0.8) # Yellow for path
+                px1, py1, px2, py2 = self.enemy.get_path_points()
+                Line(points=[px1, py1, px2, py2], width=2)
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0

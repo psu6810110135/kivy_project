@@ -224,11 +224,15 @@ class EnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
-        self.current_anim = "idle"
+        self.current_anim = "walk"  # Start with walk animation
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
         self.facing = -1  # Face left (toward player) by default
+        self.speed = 120  # Movement speed
+
+        # Path to player
+        self.target_pos: Vector = pos  # Will be updated to player position
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -262,8 +266,31 @@ class EnemyEntity(Entity):
         if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
         return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
 
-    def update(self, dt: float):
-        """Advance animation frame."""
+    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
+        """Move toward player and advance animation frame."""
+        # Update target to player position
+        self.target_pos = player_pos
+
+        # Calculate direction to player
+        direction = self.target_pos - self.pos
+        distance = direction.length()
+
+        # Move toward player if not too close
+        if distance > 50:  # Stop when close to player
+            move_vec = direction.normalize() * (self.speed * dt)
+            self.pos = self.pos + move_vec
+
+            # Update facing direction based on movement
+            if direction.x < 0:
+                self.facing = -1
+            else:
+                self.facing = 1
+
+        # Boundary clamping
+        self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
+        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+
+        # Advance animation frame
         frames = self.animations.get(self.current_anim, [])
         if not frames:
             return
@@ -272,6 +299,14 @@ class EnemyEntity(Entity):
         if self.frame_timer >= self.animation_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
+
+    def get_path_points(self) -> Tuple[float, float, float, float]:
+        """Return start and end points for path visualization: (x1, y1, x2, y2)"""
+        center_x = self.pos.x + self.size[0] / 2
+        center_y = self.pos.y + self.size[1] / 2
+        target_x = self.target_pos.x
+        target_y = self.target_pos.y
+        return (center_x, center_y, target_x, target_y)
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
         bboxes = self.anim_bboxes.get(self.current_anim)
