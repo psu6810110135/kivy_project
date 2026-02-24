@@ -83,6 +83,9 @@ class GameWidget(Widget):
             enemy.update(dt, player_center, (self.width, self.height))
             self._update_enemy_state(enemy)
 
+        # Light separation so enemies don't stack
+        self._separate_enemies()
+
         # Handle continuous fire when holding left click
         if self.firing:
             self.fire_timer += dt
@@ -107,6 +110,24 @@ class GameWidget(Widget):
             self._set_enemy_anim(enemy, "attack")
         else:
             self._set_enemy_anim(enemy, "walk")
+
+    def _separate_enemies(self):
+        if len(self.enemies) < 2:
+            return
+        min_dist = 40
+        for i in range(len(self.enemies)):
+            for j in range(i + 1, len(self.enemies)):
+                e1 = self.enemies[i]
+                e2 = self.enemies[j]
+                c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
+                c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
+                delta = c2 - c1
+                dist = max(delta.length(), 0.001)
+                if dist < min_dist:
+                    push = (min_dist - dist) / 2
+                    move = delta.normalize() * push
+                    e1.pos -= move
+                    e2.pos += move
 
     @staticmethod
     def _rects_intersect(a, b) -> bool:
