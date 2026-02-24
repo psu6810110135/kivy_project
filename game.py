@@ -46,6 +46,11 @@ class GameWidget(Widget):
             self.debug_mode = not self.debug_mode
             return True
 
+        if self.debug_mode and key in ('+', '='):
+            # Spawn an extra enemy for testing
+            self._spawn_enemy()
+            return True
+
         self.pressed_keys.add(key)
         return True
 
