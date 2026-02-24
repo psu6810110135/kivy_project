@@ -8,7 +8,7 @@ from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 
-from entities import PlayerEntity, BulletEntity, EnemyEntity
+from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
@@ -19,6 +19,7 @@ class GameWidget(Widget):
 
         # Preload all enemy textures at startup to avoid runtime lag
         EnemyEntity.preload_all_skins()
+        SpecialEnemyEntity.preload_all_skins()
 
         self.player = PlayerEntity(pos=Vector(100, 100))
         # Enemies spawn at left/right edges
@@ -27,6 +28,12 @@ class GameWidget(Widget):
         self.base_spawn_interval = 2.0  # Starting spawn interval
         self.spawn_interval = self.base_spawn_interval
         self.bullets: List[BulletEntity] = []
+        
+        # Special enemy spawning (every 3 minutes, no max limit)
+        self.special_enemies: List[SpecialEnemyEntity] = []
+        self.special_spawn_timer = 0.0
+        self.special_spawn_interval = 180.0  # 3 minutes in seconds
+        self.last_special_types: List[str] = []  # Track last 2 types spawned
         self.bg_texture = CoreImage("game_picture/background/bg2.png").texture
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
@@ -119,11 +126,22 @@ class GameWidget(Widget):
             self.spawn_timer -= self.spawn_interval
             self._spawn_enemy()
 
+        # Spawn special enemies every 3 minutes (affected by time speed multiplier)
+        self.special_spawn_timer += dt * self.time_speed_multiplier
+        if self.special_spawn_timer >= self.special_spawn_interval:
+            self.special_spawn_timer -= self.special_spawn_interval
+            self._spawn_special_enemy()
+
         # Update all enemies (target player's center for accurate pathing)
         player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
         for enemy in self.enemies[:]:
             enemy.update(dt, player_center, (self.width, self.height))
             self._update_enemy_state(enemy)
+
+        # Update all special enemies
+        for special_enemy in self.special_enemies[:]:
+            special_enemy.update(dt, player_center, (self.width, self.height))
+            self._update_enemy_state(special_enemy)
 
         # Light separation so enemies don't stack
         self._separate_enemies()
@@ -155,7 +173,8 @@ class GameWidget(Widget):
 
     def _separate_enemies(self):
         """Separate enemies using spatial grid for O(n) average performance."""
-        if len(self.enemies) < 2:
+        all_enemies = self.enemies + self.special_enemies
+        if len(all_enemies) < 2:
             return
 
         min_dist = 80  # Minimum distance between enemy centers
@@ -163,7 +182,7 @@ class GameWidget(Widget):
 
         # Build spatial grid
         grid = {}
-        for enemy in self.enemies:
+        for enemy in all_enemies:
             cx = int((enemy.pos.x + enemy.size[0] / 2) / cell_size)
             cy = int((enemy.pos.y + enemy.size[1] / 2) / cell_size)
             key = (cx, cy)
@@ -229,6 +248,10 @@ class GameWidget(Widget):
             for enemy in self.enemies:
                 enemy.draw(self.canvas)
 
+            # Draw all special enemies
+            for special_enemy in self.special_enemies:
+                special_enemy.draw(self.canvas)
+
             # Draw bullets
             for b in self.bullets:
                 b.draw(self.canvas)
@@ -255,10 +278,22 @@ class GameWidget(Widget):
                     ex, ey, ew, eh = enemy.get_hitbox()
                     Line(rectangle=(ex, ey, ew, eh), width=2)
 
+                # Special Enemy Hitbox
+                Color(1, 0, 1, 0.8) # Magenta for special enemy
+                for special_enemy in self.special_enemies:
+                    ex, ey, ew, eh = special_enemy.get_hitbox()
+                    Line(rectangle=(ex, ey, ew, eh), width=2)
+
                 # Enemy Path to Player
                 Color(1, 1, 0, 0.8) # Yellow for path
                 for enemy in self.enemies:
                     px1, py1, px2, py2 = enemy.get_path_points()
+                    Line(points=[px1, py1, px2, py2], width=2)
+
+                # Special Enemy Path to Player
+                Color(0, 1, 1, 0.8) # Cyan for special enemy path
+                for special_enemy in self.special_enemies:
+                    px1, py1, px2, py2 = special_enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
 
     def _draw_timer(self):
@@ -278,7 +313,7 @@ class GameWidget(Widget):
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
-        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}"
+        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}"
         if self.debug_mode:
             info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
         self.debug_label.text = info
@@ -321,6 +356,40 @@ class GameWidget(Widget):
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
             scale_to_player=1.0
+        ))
+
+    def _spawn_special_enemy(self):
+        """Spawn special enemy at random edge. Must not repeat last 2 types spawned. No max limit."""
+        # Get available types (exclude last 2 spawned)
+        available = [s for s in SpecialEnemyEntity.SKINS if s not in self.last_special_types]
+        if not available:
+            # Fallback if all excluded (shouldn't happen with 3 types and tracking 2)
+            available = SpecialEnemyEntity.SKINS
+
+        selected = random.choice(available)
+
+        # Update last 2 tracking
+        self.last_special_types.append(selected)
+        if len(self.last_special_types) > 2:
+            self.last_special_types.pop(0)
+
+        # Spawn at random edge (same logic as basic enemy)
+        spawn_left = random.choice([True, False])
+
+        block_unit = self.height / 10.0
+        special_enemy_height = self.player.size[1] * 1.2  # Special enemies are 1.2x size
+        min_y = block_unit
+        max_y = self.height - (3 * block_unit) - special_enemy_height
+        max_y = max(min_y, max_y)
+        y_pos = random.uniform(min_y, max_y)
+
+        x_pos = 50 if spawn_left else self.width - 50
+
+        # Spawn special enemy with selected type
+        self.special_enemies.append(SpecialEnemyEntity(
+            pos=Vector(x_pos, y_pos),
+            player_size=self.player.size,
+            asset_path=selected
         ))
 
     def on_size(self, *args):

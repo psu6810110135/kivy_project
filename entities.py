@@ -381,3 +381,205 @@ class EnemyEntity(Entity):
                 PopMatrix()
             else:
                 Rectangle(texture=texture, pos=(x, y), size=self.size)
+class SpecialEnemyEntity(Entity):
+    """Special enemy with enhanced stats: 1.5x speed, 1.2x size. Spawns every 3 minutes."""
+
+    # Separate class-level caches to avoid conflict with basic enemies
+    _texture_cache: Dict[str, Dict[str, List]] = {}
+    _bbox_cache: Dict[str, Dict[str, List[Tuple[float, float, float, float]]]] = {}
+    _base_size_cache: Dict[str, Tuple[float, float]] = {}
+
+    SKINS = [
+        "game_picture/special_enemy/Gorgon",
+        "game_picture/special_enemy/Kitsune",
+        "game_picture/special_enemy/Red_Werewolf",
+    ]
+
+    # Animation frame counts per skin type
+    ANIMATION_FRAMES = {
+        "game_picture/special_enemy/Gorgon": {
+            "attack": 16,
+            "dead": 3,
+            "hurt": 3,
+            "idle": 7,
+            "run": 7,
+            "walk": 13,
+        },
+        "game_picture/special_enemy/Kitsune": {
+            "attack": 11,
+            "dead": 10,
+            "hurt": 2,
+            "idle": 8,
+            "run": 8,
+            "walk": 8,
+        },
+        "game_picture/special_enemy/Red_Werewolf": {
+            "attack": 7,
+            "dead": 2,
+            "hurt": 2,
+            "idle": 8,
+            "run": 9,
+            "walk": 11,
+        },
+    }
+
+    @classmethod
+    def _load_animation_cached(cls, asset_path: str, name: str, prefix: str, count: int):
+        """Load animation textures once per asset_path and cache them."""
+        if asset_path not in cls._texture_cache:
+            cls._texture_cache[asset_path] = {}
+            cls._bbox_cache[asset_path] = {}
+
+        if name in cls._texture_cache[asset_path]:
+            return
+
+        frames: List = []
+        bboxes: List[Tuple[float, float, float, float]] = []
+        for idx in range(1, count + 1):
+            path = f"{asset_path}/{prefix}{idx}.png"
+            try:
+                texture = CoreImage(path).texture
+                frames.append(texture)
+                bboxes.append(cls._compute_bbox_static(texture))
+            except Exception as exc:
+                print(f"Failed to load {path}: {exc}")
+
+        if frames:
+            cls._texture_cache[asset_path][name] = frames
+            cls._bbox_cache[asset_path][name] = bboxes
+            if name == "idle" and asset_path not in cls._base_size_cache:
+                cls._base_size_cache[asset_path] = (frames[0].width, frames[0].height)
+
+    @staticmethod
+    def _compute_bbox_static(texture) -> Tuple[float, float, float, float]:
+        """Static version of bbox computation for caching."""
+        w, h = texture.size
+        pixels = texture.pixels
+        min_x, min_y = w, h
+        max_x, max_y = -1, -1
+        for y in range(h):
+            row_start = y * w * 4
+            for x in range(w):
+                alpha = pixels[row_start + x * 4 + 3]
+                if alpha > 10:
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+        if max_x == -1: return (0.0, 0.0, 1.0, 1.0)
+        return (min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
+
+    @classmethod
+    def preload_all_skins(cls):
+        """Preload all special enemy skins at startup to avoid runtime lag."""
+        for skin in cls.SKINS:
+            frames = cls.ANIMATION_FRAMES[skin]
+            cls._load_animation_cached(skin, "idle", "Idle", frames["idle"])
+            cls._load_animation_cached(skin, "walk", "Walk", frames["walk"])
+            cls._load_animation_cached(skin, "run", "Run", frames["run"])
+            cls._load_animation_cached(skin, "attack", "Attack_", frames["attack"])
+            cls._load_animation_cached(skin, "hurt", "Hurt", frames["hurt"])
+            cls._load_animation_cached(skin, "dead", "Dead", frames["dead"])
+
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, asset_path: str = None):
+        if asset_path is None:
+            self.asset_path = random.choice(self.SKINS)
+        else:
+            self.asset_path = asset_path
+
+        # Load animations (uses cache if already loaded)
+        frames = self.ANIMATION_FRAMES[self.asset_path]
+        self._load_animation_cached(self.asset_path, "idle", "Idle", frames["idle"])
+        self._load_animation_cached(self.asset_path, "walk", "Walk", frames["walk"])
+        self._load_animation_cached(self.asset_path, "run", "Run", frames["run"])
+        self._load_animation_cached(self.asset_path, "attack", "Attack_", frames["attack"])
+        self._load_animation_cached(self.asset_path, "hurt", "Hurt", frames["hurt"])
+        self._load_animation_cached(self.asset_path, "dead", "Dead", frames["dead"])
+
+        # Reference cached textures and bboxes
+        self.animations = self._texture_cache[self.asset_path]
+        self.anim_bboxes = self._bbox_cache[self.asset_path]
+
+        base_size = self._base_size_cache.get(self.asset_path, (100, 100))
+
+        # Size: 1.2x player size (enhanced)
+        if player_size:
+            target_height = player_size[1] * 1.2
+        else:
+            target_height = Window.height / 3
+
+        scale = target_height / base_size[1]
+        width = base_size[0] * scale
+        height = base_size[1] * scale
+
+        super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
+
+        self.current_anim = "walk"
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.1
+        self.facing = -1
+        self.speed = 180  # 1.5x basic enemy speed (120 * 1.5 = 180)
+
+        self.target_pos: Vector = pos
+
+    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
+        """Move toward player and advance animation frame."""
+        self.target_pos = player_pos
+
+        enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
+        direction = self.target_pos - enemy_center
+        distance = direction.length()
+
+        if distance > 10:
+            move_vec = direction.normalize() * (self.speed * dt)
+            self.pos = self.pos + move_vec
+
+            if direction.x < 0:
+                self.facing = -1
+            else:
+                self.facing = 1
+
+        self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
+        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+
+        frames = self.animations.get(self.current_anim, [])
+        if not frames:
+            return
+
+        self.frame_timer += dt
+        if self.frame_timer >= self.animation_speed:
+            self.frame_timer = 0.0
+            self.current_frame = (self.current_frame + 1) % len(frames)
+
+    def get_path_points(self) -> Tuple[float, float, float, float]:
+        """Return start and end points for path visualization: (x1, y1, x2, y2)"""
+        center_x = self.pos.x + self.size[0] / 2
+        center_y = self.pos.y + self.size[1] / 2
+        target_x = self.target_pos.x
+        target_y = self.target_pos.y
+        return (center_x, center_y, target_x, target_y)
+
+    def get_hitbox(self) -> Tuple[float, float, float, float]:
+        bboxes = self.anim_bboxes.get(self.current_anim)
+        if not bboxes: return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+        bbox = bboxes[self.current_frame % len(bboxes)]
+        bx, by, bw, bh = bbox
+        offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
+        offset_y = (1 - (by + bh)) * self.size[1]
+        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+    def draw(self, canvas):
+        texture = self.animations.get(self.current_anim, [None])[self.current_frame]
+        if texture is None: return
+        x, y = self.pos.x, self.pos.y
+        with canvas:
+            Color(1, 1, 1, 1)
+            if self.facing == -1:
+                PushMatrix()
+                origin = (x + self.size[0] / 2, y + self.size[1] / 2)
+                Scale(x=-1, y=1, origin=origin)
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
+                PopMatrix()
+            else:
+                Rectangle(texture=texture, pos=(x, y), size=self.size)
