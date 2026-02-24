@@ -204,7 +204,7 @@ class PlayerEntity(Entity):
 class EnemyEntity(Entity):
     """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
 
-    def __init__(self, pos: Vector, asset_path: str = "game_picture/enemy/Zombie_1"):
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, scale_to_player: float = 1.0, asset_path: str = "game_picture/enemy/Zombie_1"):
         self.asset_path = asset_path
         self.animations: Dict[str, List] = {}
         self.anim_bboxes: Dict[str, List[Tuple[float, float, float, float]]] = {}
@@ -217,7 +217,13 @@ class EnemyEntity(Entity):
         self._load_animation("dead", "Dead", 5)
 
         base_texture = self.animations["idle"][0]
-        target_height = Window.height / 3
+
+        # Size relative to player if provided, otherwise fallback to window-based sizing
+        if player_size:
+            target_height = player_size[1] * scale_to_player
+        else:
+            target_height = Window.height / 3
+
         scale = target_height / base_texture.height
         width = base_texture.width * scale
         height = base_texture.height * scale
