@@ -151,8 +151,9 @@ class GameWidget(Widget):
             self.special_spawn_timer -= self.special_spawn_interval
             self._spawn_special_enemy()
 
-        # Update all enemies (target player's center for accurate pathing)
-        player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
+        # Update all enemies (target player's hitbox center for accurate pathing/aim)
+        pbox = self.player.get_hitbox()
+        player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         for enemy in self.enemies[:]:
             enemy.update(dt, player_center, (self.width, self.height))
             self._update_enemy_state(enemy)
@@ -240,7 +241,7 @@ class GameWidget(Widget):
         if len(all_enemies) < 2:
             return
 
-        min_dist = 140  # Minimum distance between enemy centers (more spacing to reduce clumping)
+        min_dist = 80  # Minimum distance between enemy centers (ลดระยะให้ติดกันมากขึ้น)
         cell_size = min_dist
 
         # Build spatial grid

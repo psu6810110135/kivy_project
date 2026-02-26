@@ -58,7 +58,8 @@ class EnemyProjectileEntity(Entity):
 
         super().__init__(pos=pos, size=(160, 160), color=(1, 0.5, 0))
 
-        direction = target_pos - pos
+        projectile_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
+        direction = target_pos - projectile_center
         self.velocity = direction.normalize() * 450 if direction.length() > 0 else Vector(0, 0)
         
         # Calculate rotation angle for proper orientation
