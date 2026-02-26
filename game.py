@@ -1,5 +1,6 @@
 from typing import Set, List
 import random
+import math
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
@@ -21,9 +22,11 @@ class GameWidget(Widget):
         EnemyEntity.preload_all_skins()
         SpecialEnemyEntity.preload_all_skins()
 
-        self.player = PlayerEntity(pos=Vector(100, 100))
+        self.player = PlayerEntity(pos=Vector(0, 0))
+        self._did_initial_player_center = False
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
+        self.enemy_spawn_counter = 0
         self.spawn_timer = 0.0
         self.base_spawn_interval = 2.0  # Starting spawn interval
         self.spawn_interval = self.base_spawn_interval
@@ -60,7 +63,38 @@ class GameWidget(Widget):
         self.add_widget(self.debug_label)
         self.add_widget(self.pos_label)
 
+        self._spawn_player_at_screen_center()
+
         Clock.schedule_interval(self.update, 1 / 60)
+
+    def _get_player_walkable_y_range(self):
+        """Return the Y range the player can actually walk to."""
+        height = self.height if self.height > 0 else Window.height
+        block_unit = height / 10.0
+        min_y = block_unit
+        max_y_allowed = height - (3 * block_unit) - self.player.size[1]
+        return (min_y, max(min_y, max_y_allowed))
+
+    def _spawn_player_at_screen_center(self):
+        """Spawn player at screen center (clamped to walkable Y band)."""
+        width = self.width if self.width > 0 else Window.width
+        height = self.height if self.height > 0 else Window.height
+
+        spawn_x = (width - self.player.size[0]) / 2
+        spawn_y = (height - self.player.size[1]) / 2
+
+        min_y, max_y = self._get_player_walkable_y_range()
+        spawn_y = max(min_y, min(spawn_y, max_y))
+
+        self.player.pos = Vector(spawn_x, spawn_y)
+
+    def _get_enemy_offscreen_x(self, enemy_width: float, spawn_left: bool) -> float:
+        """Spawn enemy from outside the screen on left or right."""
+        width = self.width if self.width > 0 else Window.width
+        margin = max(40.0, enemy_width * 0.35)
+        if spawn_left:
+            return -enemy_width - margin
+        return width + margin
 
     def _on_keyboard_closed(self):
         if self._keyboard:
@@ -138,6 +172,13 @@ class GameWidget(Widget):
             self.spawn_interval = self.base_spawn_interval - (progress * 1.5)  # 2.0 -> 0.5
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+
+        # Keep player facing aligned with cursor while shooting
+        if self.firing:
+            mx, my = Window.mouse_pos
+            local_mouse = Vector(*self.to_widget(mx, my))
+            player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
+            self.player.facing = 1 if local_mouse.x >= player_center.x else -1
 
         # Spawn enemies at left/right edges
         self.spawn_timer += dt
@@ -236,13 +277,13 @@ class GameWidget(Widget):
                 self._set_enemy_anim(enemy, "walk")
 
     def _separate_enemies(self):
-        """Separate enemies using spatial grid for O(n) average performance."""
+        """Separate enemies using soft repulsion and per-enemy separation radii."""
         all_enemies = self.enemies + self.special_enemies
         if len(all_enemies) < 2:
             return
 
-        min_dist = 80  # Minimum distance between enemy centers (ลดระยะให้ติดกันมากขึ้น)
-        cell_size = min_dist
+        max_sep_radius = max(getattr(enemy, "separation_radius", 40.0) for enemy in all_enemies)
+        cell_size = max_sep_radius * 2
 
         # Build spatial grid
         grid = {}
@@ -259,7 +300,7 @@ class GameWidget(Widget):
             # Check within same cell
             for i in range(len(cell_enemies)):
                 for j in range(i + 1, len(cell_enemies)):
-                    self._push_apart(cell_enemies[i], cell_enemies[j], min_dist)
+                    self._push_apart(cell_enemies[i], cell_enemies[j])
 
             # Check adjacent cells (only right, down, and diagonals to avoid duplicate checks)
             adjacent = [(cx + 1, cy), (cx, cy + 1), (cx + 1, cy + 1), (cx + 1, cy - 1)]
@@ -267,19 +308,47 @@ class GameWidget(Widget):
                 if adj_key in grid:
                     for e1 in cell_enemies:
                         for e2 in grid[adj_key]:
-                            self._push_apart(e1, e2, min_dist)
+                            self._push_apart(e1, e2)
 
-    def _push_apart(self, e1, e2, min_dist):
+    def _push_apart(self, e1, e2):
         """Push two enemies apart if they're too close."""
         c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
         c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
         delta = c2 - c1
-        dist = max(delta.length(), 0.001)
-        if dist < min_dist:
-            push = (min_dist - dist) / 2
-            move = delta.normalize() * push
-            e1.pos -= move
-            e2.pos += move
+        dist = delta.length()
+
+        r1 = getattr(e1, "separation_radius", min(e1.size[0], e1.size[1]) * 0.24)
+        r2 = getattr(e2, "separation_radius", min(e2.size[0], e2.size[1]) * 0.24)
+        min_dist = r1 + r2
+
+        if dist >= min_dist:
+            return
+
+        if dist < 0.001:
+            delta = Vector(1, 0)
+            dist = 1.0
+
+        # Soft collision: only resolve part of the overlap for smoother crowd motion.
+        overlap = min_dist - dist
+        soft_factor = 0.65
+        push = overlap * 0.5 * soft_factor
+        move = delta.normalize() * push
+        e1.pos -= move
+        e2.pos += move
+
+    def _get_enemy_render_order(self):
+        """Render order: danger first to front, then Y-sort, then stable spawn tie-break."""
+        all_enemies = self.enemies + self.special_enemies
+
+        def sort_key(enemy):
+            danger = enemy.get_render_danger_priority() if hasattr(enemy, "get_render_danger_priority") else 0
+            center_y = enemy.pos.y + enemy.size[1] / 2
+            spawn_order = getattr(enemy, "spawn_order", 0)
+            # Lower center_y (closer to camera in 2.5D) should render in front (later draw).
+            # Newer spawns go slightly behind to reduce flip-flop overlap artifacts.
+            return (danger, -center_y, -spawn_order)
+
+        return sorted(all_enemies, key=sort_key)
 
     @staticmethod
     def _rects_intersect(a, b) -> bool:
@@ -314,13 +383,9 @@ class GameWidget(Widget):
             self.player.draw(self.canvas)
             Color(1, 1, 1, 1)  # Reset color
 
-            # Draw all enemies
-            for enemy in self.enemies:
+            # Draw enemies using danger-aware Y-sort ordering.
+            for enemy in self._get_enemy_render_order():
                 enemy.draw(self.canvas)
-
-            # Draw all special enemies
-            for special_enemy in self.special_enemies:
-                special_enemy.draw(self.canvas)
 
             # Draw bullets
             for b in self.bullets:
@@ -418,14 +483,36 @@ class GameWidget(Widget):
             self.pos_label.text = ""
 
     def _spawn_bullet(self):
-        bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
-        offset_x = -60
+        mx, my = Window.mouse_pos
+        cursor = Vector(*self.to_widget(mx, my))
+
+        pbox = self.player.get_hitbox()
+        shooter_origin = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
+        raw_direction = cursor - shooter_origin
+
+        if raw_direction.length() == 0:
+            raw_direction = Vector(self.player.facing, 0)
+
+        # Face left/right based on cursor
+        self.player.facing = 1 if raw_direction.x >= 0 else -1
+
+        # Clamp aim to a 160-degree cone around facing direction (±80°)
+        aim_angle = math.degrees(math.atan2(raw_direction.y, raw_direction.x))
         if self.player.facing == 1:
-            bx = self.player.pos.x + self.player.size[0] + offset_x
+            clamped_angle = max(-80.0, min(80.0, aim_angle))
         else:
-            bx = self.player.pos.x - offset_x
-        by = self.player.pos.y + self.player.size[1] * 0.45
-        self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
+            relative_angle = ((aim_angle - 180.0 + 180.0) % 360.0) - 180.0
+            relative_angle = max(-80.0, min(80.0, relative_angle))
+            clamped_angle = 180.0 + relative_angle
+
+        rad = math.radians(clamped_angle)
+        shot_direction = Vector(math.cos(rad), math.sin(rad))
+
+        muzzle_pos = self.player.get_muzzle_position(shot_direction)
+        bullet_w, bullet_h = BulletEntity.SIZE
+        bullet_center = muzzle_pos + shot_direction * (bullet_w / 2)
+        spawn_pos = bullet_center - Vector(bullet_w / 2, bullet_h / 2)
+        self.bullets.append(BulletEntity(spawn_pos, shot_direction))
 
     def _spawn_enemy(self):
         """Spawn enemy at random edge (left or right) within the player's walkable band."""
@@ -435,15 +522,12 @@ class GameWidget(Widget):
 
         spawn_left = random.choice([True, False])
 
-        # Keep spawn area aligned with player's allowed Y band to avoid unreachable spawns
-        block_unit = self.height / 10.0
-        enemy_height = self.player.size[1]  # Enemy is scaled to player size below
-        min_y = block_unit
-        max_y = self.height - (3 * block_unit) - enemy_height
-        max_y = max(min_y, max_y)  # Guard against small window sizes
+        # Spawn only in the same Y band that player can reach.
+        min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
 
-        x_pos = 50 if spawn_left else self.width - 50
+        enemy_width = self.player.size[0]
+        x_pos = self._get_enemy_offscreen_x(enemy_width, spawn_left)
 
         # Spawn enemy with size relative to player (scale_to_player=1.0 = same size)
         self.enemies.append(EnemyEntity(
@@ -451,6 +535,8 @@ class GameWidget(Widget):
             player_size=self.player.size,
             scale_to_player=1.0
         ))
+        self.enemy_spawn_counter += 1
+        self.enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy(self):
         """Spawn special enemy at random edge. Must not repeat last 2 types spawned. No max limit."""
@@ -470,14 +556,11 @@ class GameWidget(Widget):
         # Spawn at random edge (same logic as basic enemy)
         spawn_left = random.choice([True, False])
 
-        block_unit = self.height / 10.0
-        special_enemy_height = self.player.size[1] * 1.2  # Special enemies are 1.2x size
-        min_y = block_unit
-        max_y = self.height - (3 * block_unit) - special_enemy_height
-        max_y = max(min_y, max_y)
+        min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
 
-        x_pos = 50 if spawn_left else self.width - 50
+        special_enemy_width = self.player.size[0] * 1.2
+        x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
         # Spawn special enemy with selected type
         self.special_enemies.append(SpecialEnemyEntity(
@@ -485,25 +568,29 @@ class GameWidget(Widget):
             player_size=self.player.size,
             asset_path=selected
         ))
+        self.enemy_spawn_counter += 1
+        self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy_by_type(self, enemy_type: str):
         """Spawn a specific special enemy type at random edge (for debug mode)."""
         spawn_left = random.choice([True, False])
 
-        block_unit = self.height / 10.0
-        special_enemy_height = self.player.size[1] * 1.2
-        min_y = block_unit
-        max_y = self.height - (3 * block_unit) - special_enemy_height
-        max_y = max(min_y, max_y)
+        min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
 
-        x_pos = 50 if spawn_left else self.width - 50
+        special_enemy_width = self.player.size[0] * 1.2
+        x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
         self.special_enemies.append(SpecialEnemyEntity(
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
             asset_path=enemy_type
         ))
+        self.enemy_spawn_counter += 1
+        self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def on_size(self, *args):
+        if not self._did_initial_player_center and self.width > 0 and self.height > 0:
+            self._spawn_player_at_screen_center()
+            self._did_initial_player_center = True
         self.player.update(0, set(), (self.width, self.height))

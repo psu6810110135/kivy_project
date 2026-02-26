@@ -38,6 +38,24 @@ pip install kivy
 python main.py
 ```
 
+## โครงสร้างโค้ด (Refactor ล่าสุด)
+
+- `entities.py`: จุดรวม export (compatibility layer) เพื่อให้ import เดิมยังใช้ได้
+- `entity_base.py`: คลาส `Entity` พื้นฐาน + status hooks
+- `status_system.py`: ระบบสถานะ (`StatusComponent`, `StatusEffect`) สำหรับทุก entity
+- `player_entity.py`: โค้ดเฉพาะผู้เล่น (movement/animation/shoot state)
+- `enemy_entities.py`: โค้ด `EnemyEntity` และ `SpecialEnemyEntity` + AI เฉพาะ
+- `projectile_entities.py`: โค้ดกระสุนผู้เล่นและ projectile ศัตรู
+
+### ระบบ Status
+
+- ทุก entity มี `status` ในตัว พร้อมเมธอด:
+  - `add_status(name, duration, potency=1.0, stacks=1, modifiers=None)`
+  - `has_status(name)` / `remove_status(name)`
+  - `get_status_multiplier(stat_name, default=1.0)`
+- ใน `update()` ของ Player/Enemy/SpecialEnemy มีการเรียก `update_statuses(dt)` แล้ว
+- รองรับการต่อยอดพฤติกรรมเฉพาะ เช่น Slow, Haste, Burn, Shield โดยไม่ต้องแก้ game loop หลัก
+
 ## สเตตัส RPG และผลลัพธ์ในเกม
 
 | Status | ผลต่อเกม                                    |
