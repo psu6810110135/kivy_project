@@ -45,8 +45,15 @@ class BulletEntity(Entity):
         self.move(Vector(self.velocity.x * dt, self.velocity.y * dt))
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        """Returns the bullet's hitbox as (x, y, width, height)"""
-        return (self.pos.x, self.pos.y, self.size[0], self.size[1])
+        """Returns the bullet's hitbox as (x, y, width, height)."""
+        # Make player shots slightly forgiving: hitbox is a bit larger than the visual effect.
+        scale_x = 1.2
+        scale_y = 1.6
+        hit_w = self.size[0] * scale_x
+        hit_h = self.size[1] * scale_y
+        offset_x = (hit_w - self.size[0]) / 2
+        offset_y = (hit_h - self.size[1]) / 2
+        return (self.pos.x - offset_x, self.pos.y - offset_y, hit_w, hit_h)
 
     def draw(self, canvas):
         with canvas:
@@ -96,8 +103,8 @@ class EnemyProjectileEntity(Entity):
                 self.current_frame = 3 + (self.current_frame - 3 + 1) % 3
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
-        # Hitbox centered on the fireball (95% of sprite size to fit visual)
-        hitbox_size = self.size[0] * 0.95
+        # Keep enemy attack fair: only central core deals damage.
+        hitbox_size = self.size[0] * 0.75
         offset = (self.size[0] - hitbox_size) / 2
         return (self.pos.x + offset, self.pos.y + offset, hitbox_size, hitbox_size)
 
@@ -257,7 +264,22 @@ class PlayerEntity(Entity):
         bx, by, bw, bh = bbox
         offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
-        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+        # Slightly shrink hurtbox vs visible body for close-call dodges.
+        shrink_scale = 0.82
+        raw_w = bw * self.size[0]
+        raw_h = bh * self.size[1]
+        hit_w = raw_w * shrink_scale
+        hit_h = raw_h * shrink_scale
+        inset_x = (raw_w - hit_w) / 2
+        inset_y = (raw_h - hit_h) / 2
+
+        return (
+            self.pos.x + offset_x + inset_x,
+            self.pos.y + offset_y + inset_y,
+            hit_w,
+            hit_h,
+        )
 
     def get_muzzle_position(self, shot_direction: Optional[Vector] = None) -> Vector:
         """Return approximate muzzle (gun barrel tip) position in world space."""
@@ -398,9 +420,18 @@ class EnemyEntity(Entity):
         self.animation_speed = 0.1
         self.facing = -1  # Face left (toward player) by default
         self.speed = 120  # Movement speed
+        self.spawn_order = 0
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.24
 
         # Path to player
         self.target_pos: Vector = pos  # Will be updated to player position
+
+    def get_render_danger_priority(self) -> int:
+        """Higher value means should be rendered in front to improve readability."""
+        priority = 1
+        if self.current_anim == "attack":
+            priority += 2
+        return priority
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
         """Move toward player and advance animation frame."""
@@ -452,24 +483,40 @@ class EnemyEntity(Entity):
         bx, by, bw, bh = bbox
         offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
-        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+        # Keep enemy hurtbox tighter to the body silhouette.
+        shrink_scale = 0.82
+        raw_w = bw * self.size[0]
+        raw_h = bh * self.size[1]
+        hit_w = raw_w * shrink_scale
+        hit_h = raw_h * shrink_scale
+        inset_x = (raw_w - hit_w) / 2
+        inset_y = (raw_h - hit_h) / 2
+
+        return (
+            self.pos.x + offset_x + inset_x,
+            self.pos.y + offset_y + inset_y,
+            hit_w,
+            hit_h,
+        )
 
     def get_attack_hitbox(self) -> Tuple[float, float, float, float]:
         """Returns the attack hitbox (hand area) for collision detection."""
         if self.current_anim != "attack":
             return None
-        
-        # Hand hitbox at front of sprite (normalized coordinates)
-        hand_width = 0.3
-        hand_height = 0.3
-        
-        if self.facing == 1:  # Facing right
-            hand_x = self.pos.x + self.size[0] * 0.7
-        else:  # Facing left
-            hand_x = self.pos.x
-        
-        hand_y = self.pos.y + self.size[1] * 0.4
-        return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
+
+        # Anchor to body hitbox so attack box stays close to the visible body.
+        hx, hy, hw, hh = self.get_hitbox()
+        hand_w = hw * 0.22
+        hand_h = hh * 0.22
+
+        if self.facing == 1:  # Facing right (front at right edge)
+            hand_x = hx + hw - (hand_w * 0.35)
+        else:  # Facing left (front at left edge)
+            hand_x = hx - (hand_w * 0.65)
+
+        hand_y = hy + hh * 0.42
+        return (hand_x, hand_y, hand_w, hand_h)
 
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]
@@ -625,6 +672,8 @@ class SpecialEnemyEntity(Entity):
         self.animation_speed = 0.1
         self.facing = -1
         self.speed = 180  # 1.5x basic enemy speed (120 * 1.5 = 180)
+        self.spawn_order = 0
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.28
 
         self.target_pos: Vector = pos
         
@@ -639,6 +688,19 @@ class SpecialEnemyEntity(Entity):
         # Load fire animation for Kitsune
         if "Kitsune" in self.asset_path:
             self._load_fire_animation()
+
+    def get_render_danger_priority(self) -> int:
+        """Higher value means should be rendered in front to improve readability."""
+        priority = 2
+
+        if "Gorgon" in self.asset_path or "Red_Werewolf" in self.asset_path:
+            priority += 1
+        if self.current_anim == "attack":
+            priority += 2
+        if "Kitsune" in self.asset_path and self.ai_state == "ranged_attack":
+            priority += 1
+
+        return priority
 
     def _load_fire_animation(self):
         """Load Kitsune's fire projectile animation frames."""
@@ -769,7 +831,22 @@ class SpecialEnemyEntity(Entity):
         bx, by, bw, bh = bbox
         offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
-        return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+        # Keep special-enemy hurtbox tighter to the body silhouette.
+        shrink_scale = 0.8
+        raw_w = bw * self.size[0]
+        raw_h = bh * self.size[1]
+        hit_w = raw_w * shrink_scale
+        hit_h = raw_h * shrink_scale
+        inset_x = (raw_w - hit_w) / 2
+        inset_y = (raw_h - hit_h) / 2
+
+        return (
+            self.pos.x + offset_x + inset_x,
+            self.pos.y + offset_y + inset_y,
+            hit_w,
+            hit_h,
+        )
 
     def get_attack_hitbox(self) -> Tuple[float, float, float, float]:
         """Returns attack hitbox based on enemy type: Gorgon (tail), Red_Werewolf (hand), Kitsune (None - ranged)."""
@@ -779,32 +856,35 @@ class SpecialEnemyEntity(Entity):
         # Kitsune is ranged - no melee attack hitbox
         if "Kitsune" in self.asset_path:
             return None
+
+        # Use body hitbox as anchor so attack boxes do not drift away from the enemy.
+        hx, hy, hw, hh = self.get_hitbox()
         
         # Gorgon attacks with tail (back of sprite)
         if "Gorgon" in self.asset_path:
-            tail_width = 0.3
-            tail_height = 0.35
-            
-            if self.facing == 1:  # Facing right, tail on left
-                tail_x = self.pos.x
-            else:  # Facing left, tail on right
-                tail_x = self.pos.x + self.size[0] * 0.7
-            
-            tail_y = self.pos.y + self.size[1] * 0.1
-            return (tail_x, tail_y, self.size[0] * tail_width, self.size[1] * tail_height)
+            tail_w = hw * 0.22
+            tail_h = hh * 0.28
+
+            if self.facing == 1:  # Facing right, tail at left/back
+                tail_x = hx - (tail_w * 0.45)
+            else:  # Facing left, tail at right/back
+                tail_x = hx + hw - (tail_w * 0.55)
+
+            tail_y = hy + hh * 0.18
+            return (tail_x, tail_y, tail_w, tail_h)
 
         # Red_Werewolf attacks with hand (front of sprite)
         if "Red_Werewolf" in self.asset_path:
-            hand_width = 0.3
-            hand_height = 0.3
+            hand_w = hw * 0.22
+            hand_h = hh * 0.22
 
             if self.facing == 1:  # Facing right
-                hand_x = self.pos.x + self.size[0] * 0.7
+                hand_x = hx + hw - (hand_w * 0.35)
             else:  # Facing left
-                hand_x = self.pos.x
+                hand_x = hx - (hand_w * 0.65)
 
-            hand_y = self.pos.y + self.size[1] * 0.4
-            return (hand_x, hand_y, self.size[0] * hand_width, self.size[1] * hand_height)
+            hand_y = hy + hh * 0.4
+            return (hand_x, hand_y, hand_w, hand_h)
         
         return None
 
