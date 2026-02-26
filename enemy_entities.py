@@ -110,6 +110,10 @@ class EnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
+        # Health system
+        self.max_hp = 50
+        self.hp = self.max_hp
+
         self.current_anim = "walk"
         self.current_frame = 0
         self.frame_timer = 0.0
@@ -210,7 +214,22 @@ class EnemyEntity(Entity):
         if texture is None:
             return
         x, y = self.pos.x, self.pos.y
+        # Health bar based on hitbox
+        hit_x, hit_y, hit_w, hit_h = self.get_hitbox()
+        bar_width = hit_w
+        bar_height = 6
+        bar_x = hit_x
+        bar_y = hit_y + hit_h + 53  # ยกขึ้นอีก 50px
         with canvas:
+            # Background
+            Color(0.15, 0.15, 0.15, 0.7)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
+            # Foreground (hp) - red
+            hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
+            Color(1, 0.15, 0.15, 1)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
+
+            # Draw enemy sprite
             Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
@@ -322,7 +341,7 @@ class SpecialEnemyEntity(Entity):
             cls._load_animation_cached(skin, "hurt", "Hurt", frames["hurt"])
             cls._load_animation_cached(skin, "dead", "Dead", frames["dead"])
 
-    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, asset_path: str = None):
+    def __init__(self, pos: Vector, player_size: Tuple[float, float] = None, asset_path: str = None, special_index: int = 1):
         if asset_path is None:
             self.asset_path = random.choice(self.SKINS)
         else:
@@ -351,6 +370,14 @@ class SpecialEnemyEntity(Entity):
         height = base_size[1] * scale
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
+
+        if special_index == 2:
+            self.max_hp = 200
+        elif special_index == 3:
+            self.max_hp = 300
+        else:
+            self.max_hp = 120
+        self.hp = self.max_hp
 
         self.current_anim = "walk"
         self.current_frame = 0
@@ -558,7 +585,22 @@ class SpecialEnemyEntity(Entity):
         if texture is None:
             return
         x, y = self.pos.x, self.pos.y
+        # Health bar based on hitbox
+        hit_x, hit_y, hit_w, hit_h = self.get_hitbox()
+        bar_width = hit_w
+        bar_height = 8
+        bar_x = hit_x
+        bar_y = hit_y + hit_h + 60  # สูงขึ้นอีก 50px
         with canvas:
+            # Background
+            Color(0.15, 0.15, 0.15, 0.7)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
+            # Foreground (hp) - purple
+            hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
+            Color(0.7, 0.2, 1, 1)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
+
+            # Draw special enemy sprite
             Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()

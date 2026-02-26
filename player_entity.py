@@ -29,6 +29,10 @@ class PlayerEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
+        # Health system
+        self.max_hp = 100
+        self.hp = self.max_hp
+
         self.current_anim = "idle"
         self.current_frame = 0
         self.frame_timer = 0.0
@@ -190,7 +194,22 @@ class PlayerEntity(Entity):
         if texture is None:
             return
         x, y = self.pos.x, self.pos.y
+        # Health bar based on hitbox
+        hit_x, hit_y, hit_w, hit_h = self.get_hitbox()
+        bar_width = hit_w
+        bar_height = 7
+        bar_x = hit_x
+        bar_y = hit_y + hit_h + 54  # ยกขึ้นอีก 50px
         with canvas:
+            # Background
+            Color(0.15, 0.15, 0.15, 0.7)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
+            # Foreground (hp)
+            hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
+            Color(0.2 + 0.8 * (1-hp_ratio), 0.8 * hp_ratio, 0.2, 1)
+            Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
+
+            # Draw player sprite
             Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()

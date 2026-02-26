@@ -563,10 +563,14 @@ class GameWidget(Widget):
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
         # Spawn special enemy with selected type
+        special_index = len(self.special_enemies) + 1
+        if special_index > 3:
+            special_index = 3
         self.special_enemies.append(SpecialEnemyEntity(
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
-            asset_path=selected
+            asset_path=selected,
+            special_index=special_index
         ))
         self.enemy_spawn_counter += 1
         self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
@@ -581,10 +585,14 @@ class GameWidget(Widget):
         special_enemy_width = self.player.size[0] * 1.2
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
+        special_index = len(self.special_enemies) + 1
+        if special_index > 3:
+            special_index = 3
         self.special_enemies.append(SpecialEnemyEntity(
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
-            asset_path=enemy_type
+            asset_path=enemy_type,
+            special_index=special_index
         ))
         self.enemy_spawn_counter += 1
         self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
