@@ -1,10 +1,11 @@
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import random
+import math
 
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
-from kivy.graphics import Color, PopMatrix, PushMatrix, Rectangle, Scale
+from kivy.graphics import Color, PopMatrix, PushMatrix, Rectangle, Rotate, Scale
 from kivy.vector import Vector
 
 @dataclass
@@ -29,14 +30,19 @@ class Entity:
         self.pos = self.pos + delta
 
 class BulletEntity(Entity):
-    """Simple projectile that moves in the direction the player was facing."""
-    def __init__(self, pos: Vector, direction: int):
-        super().__init__(pos=pos, size=(20, 5), color=(1, 1, 0))
-        self.direction = direction
+    """Projectile fired by player that travels toward cursor direction."""
+    SIZE = (24, 6)
+
+    def __init__(self, pos: Vector, direction: Vector):
+        super().__init__(pos=pos, size=self.SIZE, color=(1, 1, 0))
         self.speed = 800
+        if direction.length() == 0:
+            direction = Vector(1, 0)
+        self.velocity = direction.normalize() * self.speed
+        self.angle = math.degrees(math.atan2(self.velocity.y, self.velocity.x))
 
     def update(self, dt: float):
-        self.move(Vector(self.direction * self.speed * dt, 0))
+        self.move(Vector(self.velocity.x * dt, self.velocity.y * dt))
 
     def get_hitbox(self) -> Tuple[float, float, float, float]:
         """Returns the bullet's hitbox as (x, y, width, height)"""
@@ -45,7 +51,12 @@ class BulletEntity(Entity):
     def draw(self, canvas):
         with canvas:
             Color(*self.color)
+            PushMatrix()
+            center_x = self.pos.x + self.size[0] / 2
+            center_y = self.pos.y + self.size[1] / 2
+            Rotate(angle=self.angle, origin=(center_x, center_y))
             Rectangle(pos=self.pos, size=self.size)
+            PopMatrix()
 
 class EnemyProjectileEntity(Entity):
     """Projectile fired by enemies (e.g., Kitsune's fire)."""
@@ -247,6 +258,21 @@ class PlayerEntity(Entity):
         offset_x = bx * self.size[0] if self.facing == 1 else (1 - (bx + bw)) * self.size[0]
         offset_y = (1 - (by + bh)) * self.size[1]
         return (self.pos.x + offset_x, self.pos.y + offset_y, bw * self.size[0], bh * self.size[1])
+
+    def get_muzzle_position(self, shot_direction: Optional[Vector] = None) -> Vector:
+        """Return approximate muzzle (gun barrel tip) position in world space."""
+        muzzle_x_ratio = 0.79 if self.facing == 1 else 0.21
+        muzzle_y_ratio = 0.45  # ปรับลงมาอีกหน่อย
+
+        muzzle = Vector(
+            self.pos.x + self.size[0] * muzzle_x_ratio,
+            self.pos.y + self.size[1] * muzzle_y_ratio,
+        )
+
+        if shot_direction is not None and shot_direction.length() > 0:
+            muzzle = muzzle + shot_direction.normalize() * (self.size[0] * 0.06)
+
+        return muzzle
 
     def draw(self, canvas):
         texture = self.animations.get(self.current_anim, [None])[self.current_frame]

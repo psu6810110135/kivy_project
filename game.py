@@ -1,5 +1,6 @@
 from typing import Set, List
 import random
+import math
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
@@ -138,6 +139,13 @@ class GameWidget(Widget):
             self.spawn_interval = self.base_spawn_interval - (progress * 1.5)  # 2.0 -> 0.5
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+
+        # Keep player facing aligned with cursor while shooting
+        if self.firing:
+            mx, my = Window.mouse_pos
+            local_mouse = Vector(*self.to_widget(mx, my))
+            player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
+            self.player.facing = 1 if local_mouse.x >= player_center.x else -1
 
         # Spawn enemies at left/right edges
         self.spawn_timer += dt
@@ -418,14 +426,36 @@ class GameWidget(Widget):
             self.pos_label.text = ""
 
     def _spawn_bullet(self):
-        bx = self.player.pos.x + (self.player.size[0] if self.player.facing == 1 else 0)
-        offset_x = -60
+        mx, my = Window.mouse_pos
+        cursor = Vector(*self.to_widget(mx, my))
+
+        pbox = self.player.get_hitbox()
+        shooter_origin = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
+        raw_direction = cursor - shooter_origin
+
+        if raw_direction.length() == 0:
+            raw_direction = Vector(self.player.facing, 0)
+
+        # Face left/right based on cursor
+        self.player.facing = 1 if raw_direction.x >= 0 else -1
+
+        # Clamp aim to a 160-degree cone around facing direction (±80°)
+        aim_angle = math.degrees(math.atan2(raw_direction.y, raw_direction.x))
         if self.player.facing == 1:
-            bx = self.player.pos.x + self.player.size[0] + offset_x
+            clamped_angle = max(-80.0, min(80.0, aim_angle))
         else:
-            bx = self.player.pos.x - offset_x
-        by = self.player.pos.y + self.player.size[1] * 0.45
-        self.bullets.append(BulletEntity(Vector(bx, by), self.player.facing))
+            relative_angle = ((aim_angle - 180.0 + 180.0) % 360.0) - 180.0
+            relative_angle = max(-80.0, min(80.0, relative_angle))
+            clamped_angle = 180.0 + relative_angle
+
+        rad = math.radians(clamped_angle)
+        shot_direction = Vector(math.cos(rad), math.sin(rad))
+
+        muzzle_pos = self.player.get_muzzle_position(shot_direction)
+        bullet_w, bullet_h = BulletEntity.SIZE
+        bullet_center = muzzle_pos + shot_direction * (bullet_w / 2)
+        spawn_pos = bullet_center - Vector(bullet_w / 2, bullet_h / 2)
+        self.bullets.append(BulletEntity(spawn_pos, shot_direction))
 
     def _spawn_enemy(self):
         """Spawn enemy at random edge (left or right) within the player's walkable band."""
