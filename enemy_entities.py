@@ -24,6 +24,26 @@ class EnemyEntity(Entity):
         "game_picture/enemy/Zombie_4",
     ]
 
+    # Per-skin combat stats: Zombie_1=Normal, Zombie_2=Tank, Zombie_3=Fast, Zombie_4=Heavy
+    SKIN_STATS = {
+        "game_picture/enemy/Zombie_1": {  # Normal — balanced all-rounder
+            "max_hp": 50, "speed": 120, "damage": 10, "attack_anim_speed": 0.1,
+            "attack_enter_dist": 150, "attack_exit_dist": 200,
+        },
+        "game_picture/enemy/Zombie_2": {  # Tank — high HP, slow movement
+            "max_hp": 100, "speed": 80, "damage": 8, "attack_anim_speed": 0.12,
+            "attack_enter_dist": 140, "attack_exit_dist": 190,
+        },
+        "game_picture/enemy/Zombie_3": {  # Fast Attacker — quick strikes, fragile
+            "max_hp": 35, "speed": 150, "damage": 6, "attack_anim_speed": 0.06,
+            "attack_enter_dist": 130, "attack_exit_dist": 180,
+        },
+        "game_picture/enemy/Zombie_4": {  # Heavy Hitter — slow but devastating
+            "max_hp": 60, "speed": 90, "damage": 18, "attack_anim_speed": 0.15,
+            "attack_enter_dist": 160, "attack_exit_dist": 220,
+        },
+    }
+
     @classmethod
     def _load_animation_cached(cls, asset_path: str, name: str, prefix: str, count: int):
         if asset_path not in cls._texture_cache:
@@ -110,14 +130,23 @@ class EnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
+        # Apply per-skin stats (Normal / Tank / Fast / Heavy)
+        stats = self.SKIN_STATS.get(self.asset_path, self.SKIN_STATS["game_picture/enemy/Zombie_1"])
+        self.max_hp = stats["max_hp"]
+        self.hp = self.max_hp
+        self.damage = stats["damage"]
+
         self.current_anim = "walk"
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
+        self.attack_anim_speed = stats["attack_anim_speed"]
         self.facing = -1
-        self.speed = 120
+        self.speed = stats["speed"]
         self.spawn_order = 0
-        self.separation_radius = min(self.size[0], self.size[1]) * 0.24
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.20
+        self.attack_enter_dist = stats["attack_enter_dist"]
+        self.attack_exit_dist = stats["attack_exit_dist"]
 
         self.target_pos: Vector = pos
 
@@ -147,14 +176,19 @@ class EnemyEntity(Entity):
                 self.facing = 1
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if not frames:
             return
 
+        anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
         self.frame_timer += dt
-        if self.frame_timer >= self.animation_speed:
+        if self.frame_timer >= anim_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
 
@@ -262,6 +296,25 @@ class SpecialEnemyEntity(Entity):
         },
     }
 
+    # Per-type boss stats — all specials have much more HP than regular enemies
+    SKIN_STATS = {
+        "game_picture/special_enemy/Kitsune": {  # Ranged mage — low HP for a boss, high damage, keeps distance
+            "max_hp": 300, "speed": 140, "damage": 25, "attack_anim_speed": 0.12,
+            "fire_cooldown": 2.5, "escape_distance": 300, "attack_range": 600,
+            "attack_enter_dist": 180, "attack_exit_dist": 230,
+        },
+        "game_picture/special_enemy/Red_Werewolf": {  # Berserker — fast attacks, lighter damage
+            "max_hp": 400, "speed": 200, "damage": 12, "attack_anim_speed": 0.06,
+            "fire_cooldown": 1.5, "escape_distance": 250, "attack_range": 550,
+            "attack_enter_dist": 140, "attack_exit_dist": 190,
+        },
+        "game_picture/special_enemy/Gorgon": {  # Heavy charger — massive damage, slow charge
+            "max_hp": 500, "speed": 120, "damage": 35, "attack_anim_speed": 0.18,
+            "fire_cooldown": 1.5, "escape_distance": 250, "attack_range": 550,
+            "attack_enter_dist": 200, "attack_exit_dist": 260,
+        },
+    }
+
     @classmethod
     def _load_animation_cached(cls, asset_path: str, name: str, prefix: str, count: int):
         if asset_path not in cls._texture_cache:
@@ -352,21 +405,30 @@ class SpecialEnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
+        # Apply per-type boss stats
+        stats = self.SKIN_STATS.get(self.asset_path, self.SKIN_STATS["game_picture/special_enemy/Gorgon"])
+        self.max_hp = stats["max_hp"]
+        self.hp = self.max_hp
+        self.damage = stats["damage"]
+
         self.current_anim = "walk"
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
+        self.attack_anim_speed = stats["attack_anim_speed"]
         self.facing = -1
-        self.speed = 180
+        self.speed = stats["speed"]
         self.spawn_order = 0
-        self.separation_radius = min(self.size[0], self.size[1]) * 0.28
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.25
+        self.attack_enter_dist = stats["attack_enter_dist"]
+        self.attack_exit_dist = stats["attack_exit_dist"]
 
         self.target_pos: Vector = pos
 
         self.ai_state = "approach"
-        self.escape_distance = 250
-        self.attack_range = 550
-        self.fire_cooldown = 1.5
+        self.escape_distance = stats.get("escape_distance", 250)
+        self.attack_range = stats.get("attack_range", 550)
+        self.fire_cooldown = stats.get("fire_cooldown", 1.5)
         self.fire_timer = 0.0
         self.fire_textures = []
 
@@ -417,14 +479,19 @@ class SpecialEnemyEntity(Entity):
                 self.facing = 1
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if not frames:
             return None
 
+        anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
         self.frame_timer += dt
-        if self.frame_timer >= self.animation_speed:
+        if self.frame_timer >= anim_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
 
@@ -476,12 +543,17 @@ class SpecialEnemyEntity(Entity):
                     self.facing = 1
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if frames:
+            anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
             self.frame_timer += dt
-            if self.frame_timer >= self.animation_speed:
+            if self.frame_timer >= anim_speed:
                 self.frame_timer = 0.0
                 self.current_frame = (self.current_frame + 1) % len(frames)
 

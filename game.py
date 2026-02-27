@@ -8,6 +8,7 @@ from kivy.graphics import Color, Rectangle, Line
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
+from kivy.core.text import Label as CoreLabel
 
 from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity, EnemyProjectileEntity
 
@@ -209,6 +210,14 @@ class GameWidget(Widget):
         # Light separation so enemies don't stack
         self._separate_enemies()
 
+        # Re-clamp all enemies to walkable Y band after separation push
+        height = self.height if self.height > 0 else Window.height
+        block_unit = height / 10.0
+        walk_min_y = block_unit
+        for e in self.enemies + self.special_enemies:
+            walk_max_y = height - (3 * block_unit) - e.size[1]
+            e.pos.y = max(walk_min_y, min(e.pos.y, max(walk_min_y, walk_max_y)))
+
         # Handle continuous fire when holding left click
         if self.firing:
             self.fire_timer += dt
@@ -257,9 +266,9 @@ class GameWidget(Widget):
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         distance = (player_center - enemy_center).length()
         
-        # Hysteresis thresholds to prevent stuttering
-        attack_enter_distance = 150  # Start attacking when within 150px
-        attack_exit_distance = 200   # Stop attacking when beyond 200px
+        # Per-enemy hysteresis thresholds from stats
+        attack_enter_distance = getattr(enemy, 'attack_enter_dist', 150)
+        attack_exit_distance = getattr(enemy, 'attack_exit_dist', 200)
         
         if enemy.is_attacking:
             # Currently attacking - only stop if player moves far enough away
@@ -330,7 +339,7 @@ class GameWidget(Widget):
 
         # Soft collision: only resolve part of the overlap for smoother crowd motion.
         overlap = min_dist - dist
-        soft_factor = 0.65
+        soft_factor = 0.50
         push = overlap * 0.5 * soft_factor
         move = delta.normalize() * push
         e1.pos -= move
@@ -454,6 +463,74 @@ class GameWidget(Widget):
                 for special_enemy in self.special_enemies:
                     px1, py1, px2, py2 = special_enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
+
+                # --- Debug stat labels on entities ---
+                self._draw_debug_entity_stats()
+
+    def _draw_debug_entity_stats(self):
+        """Draw HP / DMG / SPD / Cooldown text above each entity in debug mode."""
+        # Player stats
+        phx, phy, phw, phh = self.player.get_hitbox()
+        p_info = (
+            f"HP:{self.player.hp}/{self.player.max_hp}  "
+            f"FireRate:{self.fire_rate:.2f}s  "
+            f"SPD:{self.player.speed}"
+        )
+        self._draw_label_at(p_info, phx + phw / 2, phy + phh + 80, (0, 1, 0.5, 1))
+
+        # Regular enemies
+        for enemy in self.enemies:
+            ehx, ehy, ehw, ehh = enemy.get_hitbox()
+            is_atk = getattr(enemy, 'is_attacking', False)
+            e_info = (
+                f"HP:{enemy.hp}/{enemy.max_hp}  "
+                f"DMG:{enemy.damage}  "
+                f"SPD:{enemy.speed}  "
+                f"AtkSpd:{enemy.attack_anim_speed:.2f}  "
+                f"{'ATK' if is_atk else 'walk'}"
+            )
+            self._draw_label_at(e_info, ehx + ehw / 2, ehy + ehh + 75, (1, 0.7, 0.3, 1))
+
+        # Special enemies
+        for se in self.special_enemies:
+            shx, shy, shw, shh = se.get_hitbox()
+            is_atk = getattr(se, 'is_attacking', False)
+            se_name = se.asset_path.split('/')[-1]
+            se_info = (
+                f"{se_name}  HP:{se.hp}/{se.max_hp}  "
+                f"DMG:{se.damage}  SPD:{se.speed}  "
+                f"AtkSpd:{se.attack_anim_speed:.2f}  "
+            )
+            if "Kitsune" in se.asset_path:
+                remaining_cd = max(0.0, se.fire_cooldown - se.fire_timer)
+                se_info += f"FireCD:{remaining_cd:.1f}/{se.fire_cooldown:.1f}s  AI:{se.ai_state}"
+            else:
+                se_info += f"{'ATK' if is_atk else 'walk'}"
+            self._draw_label_at(se_info, shx + shw / 2, shy + shh + 85, (0.8, 0.3, 1, 1))
+
+    def _draw_label_at(self, text: str, cx: float, y: float, color_tuple=(1, 1, 1, 1)):
+        """Render a small debug label centered at (cx, y) on the canvas with outline."""
+        # Draw dark outline by rendering the text offset in 4 directions
+        outline_color = (0, 0, 0, 1)
+        outline_lbl = CoreLabel(text=text, font_size=30, color=outline_color)
+        outline_lbl.refresh()
+        outline_tex = outline_lbl.texture
+
+        lbl = CoreLabel(text=text, font_size=30, color=color_tuple)
+        lbl.refresh()
+        tex = lbl.texture
+        if tex:
+            w, h = tex.size
+            x = cx - w / 2
+            with self.canvas:
+                # Outline (offset in 4 directions)
+                if outline_tex:
+                    Color(*outline_color)
+                    for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                        Rectangle(texture=outline_tex, pos=(x + dx, y + dy), size=(w, h))
+                # Foreground text
+                Color(*color_tuple)
+                Rectangle(texture=tex, pos=(x, y), size=(w, h))
 
     def _draw_timer(self):
         """Draw the timer text on the canvas at the top center."""

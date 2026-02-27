@@ -29,6 +29,10 @@ class PlayerEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
+        # Health system
+        self.max_hp = 100
+        self.hp = self.max_hp
+
         self.current_anim = "idle"
         self.current_frame = 0
         self.frame_timer = 0.0
