@@ -150,6 +150,7 @@ class EnemyEntity(Entity):
         self.is_dying = False
         self.death_anim_done = False
         self.damage_cooldown = 0.0  # prevent rapid-fire melee damage to player
+        self.hit_flash_timer = 0.0  # red flash on hit
 
         self.target_pos: Vector = pos
 
@@ -158,6 +159,7 @@ class EnemyEntity(Entity):
         if self.is_dying:
             return False
         self.hp -= amount
+        self.hit_flash_timer = 0.15  # brief red flash
         if self.hp <= 0:
             self.hp = 0
             self.is_dying = True
@@ -179,6 +181,10 @@ class EnemyEntity(Entity):
         # Tick damage cooldown
         if self.damage_cooldown > 0:
             self.damage_cooldown -= dt
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
 
         # Death animation — play once then mark done
         if self.is_dying:
@@ -279,7 +285,10 @@ class EnemyEntity(Entity):
             return
         x, y = self.pos.x, self.pos.y
         with canvas:
-            Color(1, 1, 1, 1)
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)
@@ -459,6 +468,7 @@ class SpecialEnemyEntity(Entity):
         self.is_dying = False
         self.death_anim_done = False
         self.damage_cooldown = 0.0
+        self.hit_flash_timer = 0.0  # red flash on hit
 
         self.target_pos: Vector = pos
 
@@ -477,6 +487,7 @@ class SpecialEnemyEntity(Entity):
         if self.is_dying:
             return False
         self.hp -= amount
+        self.hit_flash_timer = 0.15  # brief red flash
         if self.hp <= 0:
             self.hp = 0
             self.is_dying = True
@@ -513,6 +524,10 @@ class SpecialEnemyEntity(Entity):
         # Tick damage cooldown
         if self.damage_cooldown > 0:
             self.damage_cooldown -= dt
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
 
         # Death animation — play once then mark done
         if self.is_dying:
@@ -699,7 +714,10 @@ class SpecialEnemyEntity(Entity):
             return
         x, y = self.pos.x, self.pos.y
         with canvas:
-            Color(1, 1, 1, 1)
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)

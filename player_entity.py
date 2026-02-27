@@ -48,6 +48,7 @@ class PlayerEntity(Entity):
         self.hurt_timer = 0.0
         self.hurt_duration = 0.3  # seconds of hurt flash/anim
         self.death_anim_done = False
+        self.hit_flash_timer = 0.0  # red flash on hit
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -105,6 +106,10 @@ class PlayerEntity(Entity):
                     else:
                         self.death_anim_done = True
             return frames[self.current_frame] if frames else None
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
 
         # Hurt timer countdown
         if self.is_hurt:
@@ -175,6 +180,7 @@ class PlayerEntity(Entity):
         self.hp -= amount
         self.is_hurt = True
         self.hurt_timer = self.hurt_duration
+        self.hit_flash_timer = 0.15  # brief red flash
         if self.hp <= 0:
             self.hp = 0
             self.is_dead = True
@@ -241,7 +247,10 @@ class PlayerEntity(Entity):
             return
         x, y = self.pos.x, self.pos.y
         with canvas:
-            Color(1, 1, 1, 1)
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)

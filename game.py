@@ -472,12 +472,7 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
 
-            # Draw player with red flash if hit
-            if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
-                # Flash red when hit
-                Color(1, 0.3, 0.3, 1)
-            else:
-                Color(1, 1, 1, 1)
+            # Draw player (hit flash handled inside draw())
             self.player.draw(self.canvas)
             Color(1, 1, 1, 1)  # Reset color
 
@@ -495,6 +490,9 @@ class GameWidget(Widget):
 
             # Draw timer at top center
             self._draw_timer()
+
+            # Draw health bars above all entities
+            self._draw_health_bars()
 
             # Debug hitboxes
             if self.debug_mode:
@@ -620,6 +618,61 @@ class GameWidget(Widget):
                 # Foreground text
                 Color(*color_tuple)
                 Rectangle(texture=tex, pos=(x, y), size=(w, h))
+
+    def _draw_health_bars(self):
+        """Draw health bars above all entities (player + enemies)."""
+        # Collect all entities: (entity, bar_width, bar_height, y_offset_above_sprite)
+        entities = []
+        # Player
+        entities.append((self.player, 60, 7, 28))
+        # Regular enemies
+        for e in self.enemies:
+            entities.append((e, 50, 5, 25))
+        # Special enemies (bigger bars)
+        for se in self.special_enemies:
+            entities.append((se, 70, 6, 26))
+
+        with self.canvas:
+            for entity, bar_w, bar_h, y_off in entities:
+                hp = getattr(entity, 'hp', 0)
+                max_hp = getattr(entity, 'max_hp', 1)
+                if max_hp <= 0:
+                    continue
+                # Don't show bar for dead entities with finished death anim
+                if getattr(entity, 'death_anim_done', False):
+                    continue
+                # Skip full HP enemies (only show when damaged)
+                if hp >= max_hp and not isinstance(entity, PlayerEntity):
+                    continue
+
+                ratio = max(0.0, min(1.0, hp / max_hp))
+
+                # Position: centered above the sprite's hitbox
+                hx, hy, hw, hh = entity.get_hitbox()
+                bar_x = hx + hw / 2 - bar_w / 2
+                bar_y = hy + hh + y_off
+
+                # Background (dark semi-transparent)
+                Color(0.15, 0.15, 0.15, 0.85)
+                Rectangle(pos=(bar_x - 1, bar_y - 1), size=(bar_w + 2, bar_h + 2))
+
+                # HP fill — color gradient: green (>60%) → yellow (30-60%) → red (<30%)
+                if ratio > 0.6:
+                    r, g, b = 0.2, 0.9, 0.2  # green
+                elif ratio > 0.3:
+                    r, g, b = 1.0, 0.85, 0.1  # yellow
+                else:
+                    r, g, b = 0.95, 0.15, 0.15  # red
+
+                Color(r, g, b, 0.95)
+                Rectangle(pos=(bar_x, bar_y), size=(bar_w * ratio, bar_h))
+
+                # Thin border outline
+                Color(0.3, 0.3, 0.3, 0.7)
+                Line(rectangle=(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2), width=1)
+
+            # Reset color
+            Color(1, 1, 1, 1)
 
     def _draw_timer(self):
         """Draw the timer text on the canvas at the top center."""
