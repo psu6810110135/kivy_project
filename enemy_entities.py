@@ -147,8 +147,25 @@ class EnemyEntity(Entity):
         self.separation_radius = min(self.size[0], self.size[1]) * 0.20
         self.attack_enter_dist = stats["attack_enter_dist"]
         self.attack_exit_dist = stats["attack_exit_dist"]
+        self.is_dying = False
+        self.death_anim_done = False
+        self.damage_cooldown = 0.0  # prevent rapid-fire melee damage to player
 
         self.target_pos: Vector = pos
+
+    def take_damage(self, amount: float) -> bool:
+        """Apply damage. Returns True if enemy died."""
+        if self.is_dying:
+            return False
+        self.hp -= amount
+        if self.hp <= 0:
+            self.hp = 0
+            self.is_dying = True
+            self.current_anim = "dead"
+            self.current_frame = 0
+            self.frame_timer = 0.0
+            return True
+        return False
 
     def get_render_danger_priority(self) -> int:
         priority = 1
@@ -158,6 +175,23 @@ class EnemyEntity(Entity):
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
         self.update_statuses(dt)
+
+        # Tick damage cooldown
+        if self.damage_cooldown > 0:
+            self.damage_cooldown -= dt
+
+        # Death animation — play once then mark done
+        if self.is_dying:
+            frames = self.animations.get("dead", [])
+            if frames and not self.death_anim_done:
+                self.frame_timer += dt
+                if self.frame_timer >= self.animation_speed:
+                    self.frame_timer = 0.0
+                    if self.current_frame < len(frames) - 1:
+                        self.current_frame += 1
+                    else:
+                        self.death_anim_done = True
+            return
 
         self.target_pos = player_pos
         enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
@@ -422,6 +456,9 @@ class SpecialEnemyEntity(Entity):
         self.separation_radius = min(self.size[0], self.size[1]) * 0.25
         self.attack_enter_dist = stats["attack_enter_dist"]
         self.attack_exit_dist = stats["attack_exit_dist"]
+        self.is_dying = False
+        self.death_anim_done = False
+        self.damage_cooldown = 0.0
 
         self.target_pos: Vector = pos
 
@@ -434,6 +471,20 @@ class SpecialEnemyEntity(Entity):
 
         if "Kitsune" in self.asset_path:
             self._load_fire_animation()
+
+    def take_damage(self, amount: float) -> bool:
+        """Apply damage. Returns True if enemy died."""
+        if self.is_dying:
+            return False
+        self.hp -= amount
+        if self.hp <= 0:
+            self.hp = 0
+            self.is_dying = True
+            self.current_anim = "dead"
+            self.current_frame = 0
+            self.frame_timer = 0.0
+            return True
+        return False
 
     def get_render_danger_priority(self) -> int:
         priority = 2
@@ -458,6 +509,23 @@ class SpecialEnemyEntity(Entity):
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
         self.update_statuses(dt)
+
+        # Tick damage cooldown
+        if self.damage_cooldown > 0:
+            self.damage_cooldown -= dt
+
+        # Death animation — play once then mark done
+        if self.is_dying:
+            frames = self.animations.get("dead", [])
+            if frames and not self.death_anim_done:
+                self.frame_timer += dt
+                if self.frame_timer >= self.animation_speed:
+                    self.frame_timer = 0.0
+                    if self.current_frame < len(frames) - 1:
+                        self.current_frame += 1
+                    else:
+                        self.death_anim_done = True
+            return None
 
         self.target_pos = player_pos
 

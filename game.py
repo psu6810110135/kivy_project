@@ -49,6 +49,8 @@ class GameWidget(Widget):
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
         self.pos_label = Label(text="", halign="right", valign="top")
         self.debug_mode = False
+        self.god_mode = False  # Player invincibility (debug key 8)
+        self.bullet_damage = 10  # Damage per bullet
         self.fire_rate = 0.15  # seconds between shots while holding
         self.fire_timer = 0.0
         self.firing = False
@@ -111,6 +113,10 @@ class GameWidget(Widget):
                 self.time_speed_multiplier = 1.0  # Reset speed when exiting debug mode
             return True
 
+        if key == '8':
+            self.god_mode = not self.god_mode
+            return True
+
         if self.debug_mode and key in ('+', '='):
             # Spawn an extra enemy for testing
             self._spawn_enemy()
@@ -147,6 +153,8 @@ class GameWidget(Widget):
 
     def on_touch_down(self, touch):
         if touch.button == 'left':
+            if self.player.is_dead:
+                return True
             self.player.start_shooting()
             self.firing = True
             self.fire_timer = 0.0  # require hold; first shot after fire_rate
@@ -174,6 +182,23 @@ class GameWidget(Widget):
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
+        # If player is dead, skip gameplay updates but still draw
+        if self.player.is_dead:
+            # Still update death anims for enemies in progress
+            for enemy in self.enemies[:]:
+                if enemy.is_dying:
+                    enemy.update(dt, Vector(0, 0), (self.width, self.height))
+                    if enemy.death_anim_done:
+                        self.enemies.remove(enemy)
+            for se in self.special_enemies[:]:
+                if se.is_dying:
+                    se.update(dt, Vector(0, 0), (self.width, self.height))
+                    if se.death_anim_done:
+                        self.special_enemies.remove(se)
+            self._draw_scene()
+            self._update_debug(dt)
+            return
+
         # Keep player facing aligned with cursor while shooting
         if self.firing:
             mx, my = Window.mouse_pos
@@ -198,14 +223,18 @@ class GameWidget(Widget):
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         for enemy in self.enemies[:]:
             enemy.update(dt, player_center, (self.width, self.height))
-            self._update_enemy_state(enemy)
+            if not enemy.is_dying:
+                self._update_enemy_state(enemy)
 
         # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
-            projectile = special_enemy.update(dt, player_center, (self.width, self.height))
-            if projectile:  # Kitsune spawned a fire projectile
-                self.enemy_projectiles.append(projectile)
-            self._update_enemy_state(special_enemy)
+            if not special_enemy.is_dying:
+                projectile = special_enemy.update(dt, player_center, (self.width, self.height))
+                if projectile:  # Kitsune spawned a fire projectile
+                    self.enemy_projectiles.append(projectile)
+                self._update_enemy_state(special_enemy)
+            else:
+                special_enemy.update(dt, player_center, (self.width, self.height))
 
         # Light separation so enemies don't stack
         self._separate_enemies()
@@ -219,17 +248,41 @@ class GameWidget(Widget):
             e.pos.y = max(walk_min_y, min(e.pos.y, max(walk_min_y, walk_max_y)))
 
         # Handle continuous fire when holding left click
-        if self.firing:
+        if self.firing and not self.player.is_dead:
             self.fire_timer += dt
             if self.fire_timer >= self.fire_rate:
                 self.fire_timer -= self.fire_rate
                 self._spawn_bullet()
         
-        # Update and clean up bullets
+        # Update and clean up bullets + bullet-enemy collision
         for b in self.bullets[:]:
             b.update(dt)
-            if b.pos.x < 0 or b.pos.x > self.width:
+            # Off-screen removal
+            if b.pos.x < -50 or b.pos.x > self.width + 50 or b.pos.y < -50 or b.pos.y > self.height + 50:
                 self.bullets.remove(b)
+                continue
+            # Check collision with regular enemies
+            bullet_box = b.get_hitbox()
+            hit = False
+            for enemy in self.enemies[:]:
+                if enemy.is_dying:
+                    continue
+                if self._rects_intersect(bullet_box, enemy.get_hitbox()):
+                    enemy.take_damage(self.bullet_damage)
+                    hit = True
+                    break
+            if not hit:
+                # Check collision with special enemies
+                for se in self.special_enemies[:]:
+                    if se.is_dying:
+                        continue
+                    if self._rects_intersect(bullet_box, se.get_hitbox()):
+                        se.take_damage(self.bullet_damage)
+                        hit = True
+                        break
+            if hit:
+                if b in self.bullets:
+                    self.bullets.remove(b)
         
         # Update and clean up enemy projectiles
         for proj in self.enemy_projectiles[:]:
@@ -238,7 +291,15 @@ class GameWidget(Widget):
             pbox = self.player.get_hitbox()
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
-                # Hit player! Add visual feedback
+                # Hit player! Apply damage (unless godmode)
+                if not self.god_mode:
+                    # Kitsune fire damage
+                    fire_damage = 25
+                    for se in self.special_enemies:
+                        if "Kitsune" in se.asset_path:
+                            fire_damage = se.damage
+                            break
+                    self.player.take_damage(fire_damage)
                 if not hasattr(self, 'player_hit_flash'):
                     self.player_hit_flash = 0.0
                 self.player_hit_flash = 0.3  # Flash for 0.3 seconds
@@ -251,12 +312,40 @@ class GameWidget(Widget):
         # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
             self.player_hit_flash -= dt
-                
+
+        # Enemy melee attack damages player
+        if not self.player.is_dead:
+            for enemy in self.enemies + self.special_enemies:
+                if enemy.is_dying:
+                    continue
+                if not getattr(enemy, 'is_attacking', False):
+                    continue
+                if enemy.damage_cooldown > 0:
+                    continue
+                # Check attack hitbox vs player
+                attack_box = enemy.get_attack_hitbox()
+                if attack_box is None:
+                    continue
+                pbox = self.player.get_hitbox()
+                if self._rects_intersect(attack_box, pbox):
+                    if not self.god_mode:
+                        self.player.take_damage(enemy.damage)
+                    enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
+                    if not hasattr(self, 'player_hit_flash'):
+                        self.player_hit_flash = 0.0
+                    self.player_hit_flash = 0.3
+
+        # Remove enemies whose death animation is done
+        self.enemies = [e for e in self.enemies if not e.death_anim_done]
+        self.special_enemies = [e for e in self.special_enemies if not e.death_anim_done]
+
         self._draw_scene()
         self._update_debug(dt)
 
     def _update_enemy_state(self, enemy):
         """Trigger attack animation when enemy's attack hitbox (hand/tail) touches player."""
+        if enemy.is_dying:
+            return
         # Add hysteresis to prevent stuttering: use different thresholds for entering/exiting attack
         if not hasattr(enemy, 'is_attacking'):
             enemy.is_attacking = False
@@ -549,7 +638,8 @@ class GameWidget(Widget):
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
-        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
+        god_str = "  [GODMODE ON]" if self.god_mode else ""
+        info = f"FPS: {fps:.1f}{god_str}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
         if self.debug_mode:
             info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
         self.debug_label.text = info
