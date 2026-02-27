@@ -20,6 +20,8 @@ class PlayerEntity(Entity):
         self._load_animation("walk", "Walk", 7)
         self._load_animation("run", "Run", 8)
         self._load_animation("shot", "Shot_", 5)
+        self._load_animation("hurt", "Hurt", 3)
+        self._load_animation("dead", "Dead", 4)
 
         base_texture = self.animations["idle"][0]
         target_height = Window.height / 3
@@ -41,6 +43,12 @@ class PlayerEntity(Entity):
         self.speed = 240
         self.run_speed = 420
         self.is_shooting = False
+        self.is_dead = False
+        self.is_hurt = False
+        self.hurt_timer = 0.0
+        self.hurt_duration = 0.3  # seconds of hurt flash/anim
+        self.death_anim_done = False
+        self.hit_flash_timer = 0.0  # red flash on hit
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
@@ -82,6 +90,33 @@ class PlayerEntity(Entity):
     def update(self, dt: float, pressed_keys: set, bounds: Tuple[float, float]):
         self.update_statuses(dt)
 
+        # Dead — play death anim once then freeze on last frame
+        if self.is_dead:
+            if self.current_anim != "dead":
+                self.current_anim = "dead"
+                self.current_frame = 0
+                self.frame_timer = 0.0
+            frames = self.animations.get("dead", [])
+            if frames and not self.death_anim_done:
+                self.frame_timer += dt
+                if self.frame_timer >= self.animation_speed:
+                    self.frame_timer = 0.0
+                    if self.current_frame < len(frames) - 1:
+                        self.current_frame += 1
+                    else:
+                        self.death_anim_done = True
+            return frames[self.current_frame] if frames else None
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
+
+        # Hurt timer countdown
+        if self.is_hurt:
+            self.hurt_timer -= dt
+            if self.hurt_timer <= 0:
+                self.is_hurt = False
+
         move_vec = Vector(0, 0)
         if "w" in pressed_keys:
             move_vec += Vector(0, 1)
@@ -96,6 +131,8 @@ class PlayerEntity(Entity):
 
         if self.is_shooting:
             self.current_anim = "shot"
+        elif self.is_hurt:
+            self.current_anim = "hurt"
         elif move_vec.length() > 0:
             self.facing = 1 if move_vec.x >= 0 else -1
             self.current_anim = "run" if "shift" in pressed_keys else "walk"
@@ -138,7 +175,22 @@ class PlayerEntity(Entity):
 
         return frames[self.current_frame]
 
+    def take_damage(self, amount: float):
+        """Apply damage to player. Returns True if player died."""
+        self.hp -= amount
+        self.is_hurt = True
+        self.hurt_timer = self.hurt_duration
+        self.hit_flash_timer = 0.15  # brief red flash
+        if self.hp <= 0:
+            self.hp = 0
+            self.is_dead = True
+            self.is_shooting = False
+            return True
+        return False
+
     def start_shooting(self):
+        if self.is_dead:
+            return
         if "shot" in self.animations:
             self.is_shooting = True
             self.current_anim = "shot"
@@ -201,16 +253,19 @@ class PlayerEntity(Entity):
         bar_x = hit_x
         bar_y = hit_y + hit_h + 54  # ยกขึ้นอีก 50px
         with canvas:
-            # Background
+            # Health bar background
             Color(0.15, 0.15, 0.15, 0.7)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
-            # Foreground (hp)
+            # Health bar foreground (green→red gradient)
             hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
             Color(0.2 + 0.8 * (1-hp_ratio), 0.8 * hp_ratio, 0.2, 1)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
 
-            # Draw player sprite
-            Color(1, 1, 1, 1)
+            # Draw player sprite with hit flash
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)

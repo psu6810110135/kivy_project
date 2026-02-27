@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple
 import random
+import math
 
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
@@ -23,6 +24,26 @@ class EnemyEntity(Entity):
         "game_picture/enemy/Zombie_3",
         "game_picture/enemy/Zombie_4",
     ]
+
+    # Per-skin combat stats: Zombie_1=Normal, Zombie_2=Tank, Zombie_3=Fast, Zombie_4=Heavy
+    SKIN_STATS = {
+        "game_picture/enemy/Zombie_1": {  # Normal — balanced all-rounder
+            "max_hp": 50, "speed": 120, "damage": 10, "attack_anim_speed": 0.1,
+            "attack_enter_dist": 150, "attack_exit_dist": 200,
+        },
+        "game_picture/enemy/Zombie_2": {  # Tank — high HP, slow movement
+            "max_hp": 100, "speed": 80, "damage": 8, "attack_anim_speed": 0.12,
+            "attack_enter_dist": 140, "attack_exit_dist": 190,
+        },
+        "game_picture/enemy/Zombie_3": {  # Fast Attacker — quick strikes, fragile
+            "max_hp": 35, "speed": 150, "damage": 6, "attack_anim_speed": 0.06,
+            "attack_enter_dist": 130, "attack_exit_dist": 180,
+        },
+        "game_picture/enemy/Zombie_4": {  # Heavy Hitter — slow but devastating
+            "max_hp": 60, "speed": 90, "damage": 18, "attack_anim_speed": 0.15,
+            "attack_enter_dist": 160, "attack_exit_dist": 220,
+        },
+    }
 
     @classmethod
     def _load_animation_cached(cls, asset_path: str, name: str, prefix: str, count: int):
@@ -110,20 +131,44 @@ class EnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
-        # Health system
-        self.max_hp = 50
+        # Apply per-skin stats (Normal / Tank / Fast / Heavy)
+        stats = self.SKIN_STATS.get(self.asset_path, self.SKIN_STATS["game_picture/enemy/Zombie_1"])
+        self.max_hp = stats["max_hp"]
         self.hp = self.max_hp
+        self.damage = stats["damage"]
 
         self.current_anim = "walk"
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
+        self.attack_anim_speed = stats["attack_anim_speed"]
         self.facing = -1
-        self.speed = 120
+        self.speed = stats["speed"]
         self.spawn_order = 0
-        self.separation_radius = min(self.size[0], self.size[1]) * 0.24
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.20
+        self.attack_enter_dist = stats["attack_enter_dist"]
+        self.attack_exit_dist = stats["attack_exit_dist"]
+        self.is_dying = False
+        self.death_anim_done = False
+        self.damage_cooldown = 0.0  # prevent rapid-fire melee damage to player
+        self.hit_flash_timer = 0.0  # red flash on hit
 
         self.target_pos: Vector = pos
+
+    def take_damage(self, amount: float) -> bool:
+        """Apply damage. Returns True if enemy died."""
+        if self.is_dying:
+            return False
+        self.hp -= amount
+        self.hit_flash_timer = 0.15  # brief red flash
+        if self.hp <= 0:
+            self.hp = 0
+            self.is_dying = True
+            self.current_anim = "dead"
+            self.current_frame = 0
+            self.frame_timer = 0.0
+            return True
+        return False
 
     def get_render_danger_priority(self) -> int:
         priority = 1
@@ -133,6 +178,27 @@ class EnemyEntity(Entity):
 
     def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
         self.update_statuses(dt)
+
+        # Tick damage cooldown
+        if self.damage_cooldown > 0:
+            self.damage_cooldown -= dt
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
+
+        # Death animation — play once then mark done
+        if self.is_dying:
+            frames = self.animations.get("dead", [])
+            if frames and not self.death_anim_done:
+                self.frame_timer += dt
+                if self.frame_timer >= self.animation_speed:
+                    self.frame_timer = 0.0
+                    if self.current_frame < len(frames) - 1:
+                        self.current_frame += 1
+                    else:
+                        self.death_anim_done = True
+            return
 
         self.target_pos = player_pos
         enemy_center = self.pos + Vector(self.size[0] / 2, self.size[1] / 2)
@@ -151,14 +217,19 @@ class EnemyEntity(Entity):
                 self.facing = 1
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if not frames:
             return
 
+        anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
         self.frame_timer += dt
-        if self.frame_timer >= self.animation_speed:
+        if self.frame_timer >= anim_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
 
@@ -221,16 +292,19 @@ class EnemyEntity(Entity):
         bar_x = hit_x
         bar_y = hit_y + hit_h + 53  # ยกขึ้นอีก 50px
         with canvas:
-            # Background
+            # Health bar background
             Color(0.15, 0.15, 0.15, 0.7)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
-            # Foreground (hp) - red
+            # Health bar foreground - red
             hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
             Color(1, 0.15, 0.15, 1)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
 
-            # Draw enemy sprite
-            Color(1, 1, 1, 1)
+            # Draw enemy sprite with hit flash
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)
@@ -278,6 +352,25 @@ class SpecialEnemyEntity(Entity):
             "idle": 8,
             "run": 9,
             "walk": 11,
+        },
+    }
+
+    # Per-type boss stats — all specials have much more HP than regular enemies
+    SKIN_STATS = {
+        "game_picture/special_enemy/Kitsune": {  # Ranged mage — low HP for a boss, high damage, keeps distance
+            "max_hp": 300, "speed": 140, "damage": 25, "attack_anim_speed": 0.12,
+            "fire_cooldown": 2.5, "escape_distance": 300, "attack_range": 600,
+            "attack_enter_dist": 180, "attack_exit_dist": 230,
+        },
+        "game_picture/special_enemy/Red_Werewolf": {  # Berserker — fast attacks, lighter damage
+            "max_hp": 400, "speed": 200, "damage": 12, "attack_anim_speed": 0.06,
+            "fire_cooldown": 1.5, "escape_distance": 250, "attack_range": 550,
+            "attack_enter_dist": 140, "attack_exit_dist": 190,
+        },
+        "game_picture/special_enemy/Gorgon": {  # Heavy charger — massive damage, slow charge
+            "max_hp": 500, "speed": 120, "damage": 35, "attack_anim_speed": 0.18,
+            "fire_cooldown": 1.5, "escape_distance": 250, "attack_range": 550,
+            "attack_enter_dist": 200, "attack_exit_dist": 260,
         },
     }
 
@@ -371,34 +464,54 @@ class SpecialEnemyEntity(Entity):
 
         super().__init__(pos=pos, size=(width, height), color=(1, 1, 1))
 
-        if special_index == 2:
-            self.max_hp = 200
-        elif special_index == 3:
-            self.max_hp = 300
-        else:
-            self.max_hp = 120
+        # Apply per-type boss stats
+        stats = self.SKIN_STATS.get(self.asset_path, self.SKIN_STATS["game_picture/special_enemy/Gorgon"])
+        self.max_hp = stats["max_hp"]
         self.hp = self.max_hp
+        self.damage = stats["damage"]
 
         self.current_anim = "walk"
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
+        self.attack_anim_speed = stats["attack_anim_speed"]
         self.facing = -1
-        self.speed = 180
+        self.speed = stats["speed"]
         self.spawn_order = 0
-        self.separation_radius = min(self.size[0], self.size[1]) * 0.28
+        self.separation_radius = min(self.size[0], self.size[1]) * 0.25
+        self.attack_enter_dist = stats["attack_enter_dist"]
+        self.attack_exit_dist = stats["attack_exit_dist"]
+        self.is_dying = False
+        self.death_anim_done = False
+        self.damage_cooldown = 0.0
+        self.hit_flash_timer = 0.0  # red flash on hit
 
         self.target_pos: Vector = pos
 
         self.ai_state = "approach"
-        self.escape_distance = 250
-        self.attack_range = 550
-        self.fire_cooldown = 1.5
+        self.escape_distance = stats.get("escape_distance", 250)
+        self.attack_range = stats.get("attack_range", 550)
+        self.fire_cooldown = stats.get("fire_cooldown", 1.5)
         self.fire_timer = 0.0
         self.fire_textures = []
 
         if "Kitsune" in self.asset_path:
             self._load_fire_animation()
+
+    def take_damage(self, amount: float) -> bool:
+        """Apply damage. Returns True if enemy died."""
+        if self.is_dying:
+            return False
+        self.hp -= amount
+        self.hit_flash_timer = 0.15  # brief red flash
+        if self.hp <= 0:
+            self.hp = 0
+            self.is_dying = True
+            self.current_anim = "dead"
+            self.current_frame = 0
+            self.frame_timer = 0.0
+            return True
+        return False
 
     def get_render_danger_priority(self) -> int:
         priority = 2
@@ -421,8 +534,29 @@ class SpecialEnemyEntity(Entity):
             except Exception as exc:
                 print(f"Failed to load fire texture {path}: {exc}")
 
-    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
+    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float], bullets=None):
         self.update_statuses(dt)
+
+        # Tick damage cooldown
+        if self.damage_cooldown > 0:
+            self.damage_cooldown -= dt
+
+        # Hit flash countdown
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
+
+        # Death animation — play once then mark done
+        if self.is_dying:
+            frames = self.animations.get("dead", [])
+            if frames and not self.death_anim_done:
+                self.frame_timer += dt
+                if self.frame_timer >= self.animation_speed:
+                    self.frame_timer = 0.0
+                    if self.current_frame < len(frames) - 1:
+                        self.current_frame += 1
+                    else:
+                        self.death_anim_done = True
+            return None
 
         self.target_pos = player_pos
 
@@ -431,7 +565,7 @@ class SpecialEnemyEntity(Entity):
         distance = direction.length()
 
         if "Kitsune" in self.asset_path:
-            return self._update_kitsune_ai(dt, enemy_center, direction, distance, bounds)
+            return self._update_kitsune_ai(dt, enemy_center, direction, distance, bounds, bullets)
 
         move_speed = self.speed * self.get_status_multiplier("move_speed", default=1.0)
         if distance > 10:
@@ -444,71 +578,127 @@ class SpecialEnemyEntity(Entity):
                 self.facing = 1
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if not frames:
             return None
 
+        anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
         self.frame_timer += dt
-        if self.frame_timer >= self.animation_speed:
+        if self.frame_timer >= anim_speed:
             self.frame_timer = 0.0
             self.current_frame = (self.current_frame + 1) % len(frames)
 
         return None
 
-    def _update_kitsune_ai(self, dt: float, enemy_center: Vector, direction: Vector, distance: float, bounds: Tuple[float, float]):
+    def _update_kitsune_ai(self, dt: float, enemy_center: Vector, direction: Vector, distance: float, bounds: Tuple[float, float], bullets=None):
+        """Kitsune AI: ranged mage that keeps distance from player and dodges bullets."""
         projectile_to_spawn = None
-
         self.fire_timer += dt
         move_speed = self.speed * self.get_status_multiplier("move_speed", default=1.0)
 
+        # --- Bullet dodge detection ---
+        dodge_vec = Vector(0, 0)
+        dodge_detect_radius = 180  # pixels — how far ahead to scan for bullets
+        if bullets:
+            for b in bullets:
+                # Vector from bullet to kitsune center
+                to_kit = enemy_center - b.pos
+                dist_to_bullet = to_kit.length()
+                if dist_to_bullet > dodge_detect_radius or dist_to_bullet < 1:
+                    continue
+                # Check if bullet is heading towards kitsune
+                if b.velocity.length() < 1:
+                    continue
+                bullet_dir = b.velocity.normalize()
+                # Dot product: positive means bullet is heading towards us
+                dot = bullet_dir.x * to_kit.x + bullet_dir.y * to_kit.y
+                if dot <= 0:
+                    continue  # bullet heading away
+                # Perpendicular dodge direction (strafe away from bullet trajectory)
+                perp = Vector(-bullet_dir.y, bullet_dir.x)
+                # Choose direction that moves away from bullet center
+                side = perp.x * to_kit.x + perp.y * to_kit.y
+                if side < 0:
+                    perp = Vector(bullet_dir.y, -bullet_dir.x)
+                # Stronger dodge when bullet is closer
+                urgency = 1.0 - (dist_to_bullet / dodge_detect_radius)
+                dodge_vec += perp * urgency
+
+        # Normalize aggregate dodge
+        is_dodging = dodge_vec.length() > 0.1
+        if is_dodging:
+            dodge_vec = dodge_vec.normalize()
+
+        # --- Movement logic ---
+        ideal_distance = (self.escape_distance + self.attack_range) / 2  # sweet spot ~450px
+
+        move_vec = Vector(0, 0)
+
         if distance < self.escape_distance:
+            # Too close — run away from player
             self.ai_state = "escape"
             if distance > 0:
-                escape_direction = (enemy_center - self.target_pos).normalize()
-                self.pos = self.pos + escape_direction * (move_speed * dt)
-
-                if escape_direction.x < 0:
-                    self.facing = -1
-                else:
-                    self.facing = 1
-
-        elif distance < self.attack_range:
-            self.ai_state = "ranged_attack"
-
-            if direction.x < 0:
-                self.facing = -1
-            else:
-                self.facing = 1
-
-            if self.fire_timer >= self.fire_cooldown:
-                self.fire_timer = 0.0
-                fire_spawn_pos = Vector(enemy_center.x - 80, enemy_center.y - 80)
-                projectile_to_spawn = EnemyProjectileEntity(
-                    pos=fire_spawn_pos,
-                    target_pos=self.target_pos,
-                    fire_textures=self.fire_textures,
-                )
-
+                move_vec = (enemy_center - self.target_pos).normalize()
+        elif distance > self.attack_range:
+            # Too far — close in to attack range but not melee
+            self.ai_state = "reposition"
+            if distance > 0:
+                move_vec = direction.normalize() * 0.5  # approach slowly
         else:
-            self.ai_state = "approach"
-            if distance > 60:
-                move_vec = direction.normalize() * (move_speed * dt)
-                self.pos = self.pos + move_vec
+            # In attack range — strafe laterally to be unpredictable
+            self.ai_state = "ranged_attack"
+            # Gentle lateral drift (perpendicular to player direction)
+            if direction.length() > 0:
+                d_norm = direction.normalize()
+                lateral = Vector(-d_norm.y, d_norm.x)
+                # Oscillate direction using fire_timer as a simple clock
+                lateral_sign = 1.0 if math.sin(self.fire_timer * 2.0) > 0 else -1.0
+                move_vec = lateral * lateral_sign * 0.4
+                # Also nudge toward ideal distance
+                dist_error = distance - ideal_distance
+                move_vec += d_norm * (dist_error / self.attack_range) * 0.3
 
-                if direction.x < 0:
-                    self.facing = -1
-                else:
-                    self.facing = 1
+        # Blend dodge into movement (dodge has high priority)
+        if is_dodging:
+            move_vec = move_vec * 0.2 + dodge_vec * 1.5  # dodge dominates
+
+        if move_vec.length() > 0:
+            self.pos = self.pos + move_vec.normalize() * (move_speed * dt)
+
+        # Face the player
+        if direction.x < 0:
+            self.facing = -1
+        else:
+            self.facing = 1
+
+        # --- Fire projectile ---
+        if distance <= self.attack_range * 1.2 and self.fire_timer >= self.fire_cooldown:
+            self.fire_timer = 0.0
+            fire_spawn_pos = Vector(enemy_center.x - 80, enemy_center.y - 80)
+            projectile_to_spawn = EnemyProjectileEntity(
+                pos=fire_spawn_pos,
+                target_pos=self.target_pos,
+                fire_textures=self.fire_textures,
+            )
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
-        self.pos.y = max(0, min(self.pos.y, bounds[1] - self.size[1]))
+        # Clamp Y to walkable band (same rule as player)
+        block_unit = bounds[1] / 10.0
+        min_y = block_unit
+        max_y = bounds[1] - (3 * block_unit) - self.size[1]
+        self.pos.y = max(min_y, min(self.pos.y, max(min_y, max_y)))
 
         frames = self.animations.get(self.current_anim, [])
         if frames:
+            anim_speed = self.attack_anim_speed if self.current_anim == "attack" else self.animation_speed
             self.frame_timer += dt
-            if self.frame_timer >= self.animation_speed:
+            if self.frame_timer >= anim_speed:
                 self.frame_timer = 0.0
                 self.current_frame = (self.current_frame + 1) % len(frames)
 
@@ -592,16 +782,19 @@ class SpecialEnemyEntity(Entity):
         bar_x = hit_x
         bar_y = hit_y + hit_h + 60  # สูงขึ้นอีก 50px
         with canvas:
-            # Background
+            # Health bar background
             Color(0.15, 0.15, 0.15, 0.7)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
-            # Foreground (hp) - purple
+            # Health bar foreground - purple
             hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
             Color(0.7, 0.2, 1, 1)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
 
-            # Draw special enemy sprite
-            Color(1, 1, 1, 1)
+            # Draw special enemy sprite with hit flash
+            if self.hit_flash_timer > 0:
+                Color(1, 0.3, 0.3, 1)  # red tint on hit
+            else:
+                Color(1, 1, 1, 1)
             if self.facing == -1:
                 PushMatrix()
                 origin = (x + self.size[0] / 2, y + self.size[1] / 2)

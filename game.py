@@ -8,6 +8,7 @@ from kivy.graphics import Color, Rectangle, Line
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
+from kivy.core.text import Label as CoreLabel
 
 from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity, EnemyProjectileEntity
 
@@ -48,6 +49,8 @@ class GameWidget(Widget):
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
         self.pos_label = Label(text="", halign="right", valign="top")
         self.debug_mode = False
+        self.god_mode = False  # Player invincibility (debug key 8)
+        self.bullet_damage = 10  # Damage per bullet
         self.fire_rate = 0.15  # seconds between shots while holding
         self.fire_timer = 0.0
         self.firing = False
@@ -110,6 +113,10 @@ class GameWidget(Widget):
                 self.time_speed_multiplier = 1.0  # Reset speed when exiting debug mode
             return True
 
+        if key == '8':
+            self.god_mode = not self.god_mode
+            return True
+
         if self.debug_mode and key in ('+', '='):
             # Spawn an extra enemy for testing
             self._spawn_enemy()
@@ -146,6 +153,8 @@ class GameWidget(Widget):
 
     def on_touch_down(self, touch):
         if touch.button == 'left':
+            if self.player.is_dead:
+                return True
             self.player.start_shooting()
             self.firing = True
             self.fire_timer = 0.0  # require hold; first shot after fire_rate
@@ -173,6 +182,23 @@ class GameWidget(Widget):
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
+        # If player is dead, skip gameplay updates but still draw
+        if self.player.is_dead:
+            # Still update death anims for enemies in progress
+            for enemy in self.enemies[:]:
+                if enemy.is_dying:
+                    enemy.update(dt, Vector(0, 0), (self.width, self.height))
+                    if enemy.death_anim_done:
+                        self.enemies.remove(enemy)
+            for se in self.special_enemies[:]:
+                if se.is_dying:
+                    se.update(dt, Vector(0, 0), (self.width, self.height))
+                    if se.death_anim_done:
+                        self.special_enemies.remove(se)
+            self._draw_scene()
+            self._update_debug(dt)
+            return
+
         # Keep player facing aligned with cursor while shooting
         if self.firing:
             mx, my = Window.mouse_pos
@@ -197,30 +223,66 @@ class GameWidget(Widget):
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         for enemy in self.enemies[:]:
             enemy.update(dt, player_center, (self.width, self.height))
-            self._update_enemy_state(enemy)
+            if not enemy.is_dying:
+                self._update_enemy_state(enemy)
 
         # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
-            projectile = special_enemy.update(dt, player_center, (self.width, self.height))
-            if projectile:  # Kitsune spawned a fire projectile
-                self.enemy_projectiles.append(projectile)
-            self._update_enemy_state(special_enemy)
+            if not special_enemy.is_dying:
+                projectile = special_enemy.update(dt, player_center, (self.width, self.height), bullets=self.bullets)
+                if projectile:  # Kitsune spawned a fire projectile
+                    self.enemy_projectiles.append(projectile)
+                self._update_enemy_state(special_enemy)
+            else:
+                special_enemy.update(dt, player_center, (self.width, self.height))
 
         # Light separation so enemies don't stack
         self._separate_enemies()
 
+        # Re-clamp all enemies to walkable Y band after separation push
+        height = self.height if self.height > 0 else Window.height
+        block_unit = height / 10.0
+        walk_min_y = block_unit
+        for e in self.enemies + self.special_enemies:
+            walk_max_y = height - (3 * block_unit) - e.size[1]
+            e.pos.y = max(walk_min_y, min(e.pos.y, max(walk_min_y, walk_max_y)))
+
         # Handle continuous fire when holding left click
-        if self.firing:
+        if self.firing and not self.player.is_dead:
             self.fire_timer += dt
             if self.fire_timer >= self.fire_rate:
                 self.fire_timer -= self.fire_rate
                 self._spawn_bullet()
         
-        # Update and clean up bullets
+        # Update and clean up bullets + bullet-enemy collision
         for b in self.bullets[:]:
             b.update(dt)
-            if b.pos.x < 0 or b.pos.x > self.width:
+            # Off-screen removal
+            if b.pos.x < -50 or b.pos.x > self.width + 50 or b.pos.y < -50 or b.pos.y > self.height + 50:
                 self.bullets.remove(b)
+                continue
+            # Check collision with regular enemies
+            bullet_box = b.get_hitbox()
+            hit = False
+            for enemy in self.enemies[:]:
+                if enemy.is_dying:
+                    continue
+                if self._rects_intersect(bullet_box, enemy.get_hitbox()):
+                    enemy.take_damage(self.bullet_damage)
+                    hit = True
+                    break
+            if not hit:
+                # Check collision with special enemies
+                for se in self.special_enemies[:]:
+                    if se.is_dying:
+                        continue
+                    if self._rects_intersect(bullet_box, se.get_hitbox()):
+                        se.take_damage(self.bullet_damage)
+                        hit = True
+                        break
+            if hit:
+                if b in self.bullets:
+                    self.bullets.remove(b)
         
         # Update and clean up enemy projectiles
         for proj in self.enemy_projectiles[:]:
@@ -229,7 +291,15 @@ class GameWidget(Widget):
             pbox = self.player.get_hitbox()
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
-                # Hit player! Add visual feedback
+                # Hit player! Apply damage (unless godmode)
+                if not self.god_mode:
+                    # Kitsune fire damage
+                    fire_damage = 25
+                    for se in self.special_enemies:
+                        if "Kitsune" in se.asset_path:
+                            fire_damage = se.damage
+                            break
+                    self.player.take_damage(fire_damage)
                 if not hasattr(self, 'player_hit_flash'):
                     self.player_hit_flash = 0.0
                 self.player_hit_flash = 0.3  # Flash for 0.3 seconds
@@ -242,12 +312,40 @@ class GameWidget(Widget):
         # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
             self.player_hit_flash -= dt
-                
+
+        # Enemy melee attack damages player
+        if not self.player.is_dead:
+            for enemy in self.enemies + self.special_enemies:
+                if enemy.is_dying:
+                    continue
+                if not getattr(enemy, 'is_attacking', False):
+                    continue
+                if enemy.damage_cooldown > 0:
+                    continue
+                # Check attack hitbox vs player
+                attack_box = enemy.get_attack_hitbox()
+                if attack_box is None:
+                    continue
+                pbox = self.player.get_hitbox()
+                if self._rects_intersect(attack_box, pbox):
+                    if not self.god_mode:
+                        self.player.take_damage(enemy.damage)
+                    enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
+                    if not hasattr(self, 'player_hit_flash'):
+                        self.player_hit_flash = 0.0
+                    self.player_hit_flash = 0.3
+
+        # Remove enemies whose death animation is done
+        self.enemies = [e for e in self.enemies if not e.death_anim_done]
+        self.special_enemies = [e for e in self.special_enemies if not e.death_anim_done]
+
         self._draw_scene()
         self._update_debug(dt)
 
     def _update_enemy_state(self, enemy):
         """Trigger attack animation when enemy's attack hitbox (hand/tail) touches player."""
+        if enemy.is_dying:
+            return
         # Add hysteresis to prevent stuttering: use different thresholds for entering/exiting attack
         if not hasattr(enemy, 'is_attacking'):
             enemy.is_attacking = False
@@ -257,9 +355,9 @@ class GameWidget(Widget):
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         distance = (player_center - enemy_center).length()
         
-        # Hysteresis thresholds to prevent stuttering
-        attack_enter_distance = 150  # Start attacking when within 150px
-        attack_exit_distance = 200   # Stop attacking when beyond 200px
+        # Per-enemy hysteresis thresholds from stats
+        attack_enter_distance = getattr(enemy, 'attack_enter_dist', 150)
+        attack_exit_distance = getattr(enemy, 'attack_exit_dist', 200)
         
         if enemy.is_attacking:
             # Currently attacking - only stop if player moves far enough away
@@ -330,7 +428,7 @@ class GameWidget(Widget):
 
         # Soft collision: only resolve part of the overlap for smoother crowd motion.
         overlap = min_dist - dist
-        soft_factor = 0.65
+        soft_factor = 0.50
         push = overlap * 0.5 * soft_factor
         move = delta.normalize() * push
         e1.pos -= move
@@ -374,12 +472,7 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
 
-            # Draw player with red flash if hit
-            if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
-                # Flash red when hit
-                Color(1, 0.3, 0.3, 1)
-            else:
-                Color(1, 1, 1, 1)
+            # Draw player (hit flash handled inside draw())
             self.player.draw(self.canvas)
             Color(1, 1, 1, 1)  # Reset color
 
@@ -397,6 +490,9 @@ class GameWidget(Widget):
 
             # Draw timer at top center
             self._draw_timer()
+
+            # Draw health bars above all entities
+            self._draw_health_bars()
 
             # Debug hitboxes
             if self.debug_mode:
@@ -455,6 +551,129 @@ class GameWidget(Widget):
                     px1, py1, px2, py2 = special_enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
 
+                # --- Debug stat labels on entities ---
+                self._draw_debug_entity_stats()
+
+    def _draw_debug_entity_stats(self):
+        """Draw HP / DMG / SPD / Cooldown text above each entity in debug mode."""
+        # Player stats
+        phx, phy, phw, phh = self.player.get_hitbox()
+        p_info = (
+            f"HP:{self.player.hp}/{self.player.max_hp}  "
+            f"FireRate:{self.fire_rate:.2f}s  "
+            f"SPD:{self.player.speed}"
+        )
+        self._draw_label_at(p_info, phx + phw / 2, phy + phh + 80, (0, 1, 0.5, 1))
+
+        # Regular enemies
+        for enemy in self.enemies:
+            ehx, ehy, ehw, ehh = enemy.get_hitbox()
+            is_atk = getattr(enemy, 'is_attacking', False)
+            e_info = (
+                f"HP:{enemy.hp}/{enemy.max_hp}  "
+                f"DMG:{enemy.damage}  "
+                f"SPD:{enemy.speed}  "
+                f"AtkSpd:{enemy.attack_anim_speed:.2f}  "
+                f"{'ATK' if is_atk else 'walk'}"
+            )
+            self._draw_label_at(e_info, ehx + ehw / 2, ehy + ehh + 75, (1, 0.7, 0.3, 1))
+
+        # Special enemies
+        for se in self.special_enemies:
+            shx, shy, shw, shh = se.get_hitbox()
+            is_atk = getattr(se, 'is_attacking', False)
+            se_name = se.asset_path.split('/')[-1]
+            se_info = (
+                f"{se_name}  HP:{se.hp}/{se.max_hp}  "
+                f"DMG:{se.damage}  SPD:{se.speed}  "
+                f"AtkSpd:{se.attack_anim_speed:.2f}  "
+            )
+            if "Kitsune" in se.asset_path:
+                remaining_cd = max(0.0, se.fire_cooldown - se.fire_timer)
+                se_info += f"FireCD:{remaining_cd:.1f}/{se.fire_cooldown:.1f}s  AI:{se.ai_state}"
+            else:
+                se_info += f"{'ATK' if is_atk else 'walk'}"
+            self._draw_label_at(se_info, shx + shw / 2, shy + shh + 85, (0.8, 0.3, 1, 1))
+
+    def _draw_label_at(self, text: str, cx: float, y: float, color_tuple=(1, 1, 1, 1)):
+        """Render a small debug label centered at (cx, y) on the canvas with outline."""
+        # Draw dark outline by rendering the text offset in 4 directions
+        outline_color = (0, 0, 0, 1)
+        outline_lbl = CoreLabel(text=text, font_size=30, color=outline_color)
+        outline_lbl.refresh()
+        outline_tex = outline_lbl.texture
+
+        lbl = CoreLabel(text=text, font_size=30, color=color_tuple)
+        lbl.refresh()
+        tex = lbl.texture
+        if tex:
+            w, h = tex.size
+            x = cx - w / 2
+            with self.canvas:
+                # Outline (offset in 4 directions)
+                if outline_tex:
+                    Color(*outline_color)
+                    for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                        Rectangle(texture=outline_tex, pos=(x + dx, y + dy), size=(w, h))
+                # Foreground text
+                Color(*color_tuple)
+                Rectangle(texture=tex, pos=(x, y), size=(w, h))
+
+    def _draw_health_bars(self):
+        """Draw health bars above all entities (player + enemies)."""
+        # Collect all entities: (entity, bar_width, bar_height, y_offset_above_sprite)
+        entities = []
+        # Player
+        entities.append((self.player, 60, 7, 28))
+        # Regular enemies
+        for e in self.enemies:
+            entities.append((e, 50, 5, 25))
+        # Special enemies (bigger bars)
+        for se in self.special_enemies:
+            entities.append((se, 70, 6, 26))
+
+        with self.canvas:
+            for entity, bar_w, bar_h, y_off in entities:
+                hp = getattr(entity, 'hp', 0)
+                max_hp = getattr(entity, 'max_hp', 1)
+                if max_hp <= 0:
+                    continue
+                # Don't show bar for dead entities with finished death anim
+                if getattr(entity, 'death_anim_done', False):
+                    continue
+                # Skip full HP enemies (only show when damaged)
+                if hp >= max_hp and not isinstance(entity, PlayerEntity):
+                    continue
+
+                ratio = max(0.0, min(1.0, hp / max_hp))
+
+                # Position: centered above the sprite's hitbox
+                hx, hy, hw, hh = entity.get_hitbox()
+                bar_x = hx + hw / 2 - bar_w / 2
+                bar_y = hy + hh + y_off
+
+                # Background (dark semi-transparent)
+                Color(0.15, 0.15, 0.15, 0.85)
+                Rectangle(pos=(bar_x - 1, bar_y - 1), size=(bar_w + 2, bar_h + 2))
+
+                # HP fill — color gradient: green (>60%) → yellow (30-60%) → red (<30%)
+                if ratio > 0.6:
+                    r, g, b = 0.2, 0.9, 0.2  # green
+                elif ratio > 0.3:
+                    r, g, b = 1.0, 0.85, 0.1  # yellow
+                else:
+                    r, g, b = 0.95, 0.15, 0.15  # red
+
+                Color(r, g, b, 0.95)
+                Rectangle(pos=(bar_x, bar_y), size=(bar_w * ratio, bar_h))
+
+                # Thin border outline
+                Color(0.3, 0.3, 0.3, 0.7)
+                Line(rectangle=(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2), width=1)
+
+            # Reset color
+            Color(1, 1, 1, 1)
+
     def _draw_timer(self):
         """Draw the timer text on the canvas at the top center."""
         remaining = self.GAME_DURATION - self.game_time
@@ -472,7 +691,8 @@ class GameWidget(Widget):
 
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
-        info = f"FPS: {fps:.1f}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
+        god_str = "  [GODMODE ON]" if self.god_mode else ""
+        info = f"FPS: {fps:.1f}{god_str}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
         if self.debug_mode:
             info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
         self.debug_label.text = info
