@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple
 import random
+import math
 
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
@@ -518,7 +519,7 @@ class SpecialEnemyEntity(Entity):
             except Exception as exc:
                 print(f"Failed to load fire texture {path}: {exc}")
 
-    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float]):
+    def update(self, dt: float, player_pos: Vector, bounds: Tuple[float, float], bullets=None):
         self.update_statuses(dt)
 
         # Tick damage cooldown
@@ -549,7 +550,7 @@ class SpecialEnemyEntity(Entity):
         distance = direction.length()
 
         if "Kitsune" in self.asset_path:
-            return self._update_kitsune_ai(dt, enemy_center, direction, distance, bounds)
+            return self._update_kitsune_ai(dt, enemy_center, direction, distance, bounds, bullets)
 
         move_speed = self.speed * self.get_status_multiplier("move_speed", default=1.0)
         if distance > 10:
@@ -580,50 +581,96 @@ class SpecialEnemyEntity(Entity):
 
         return None
 
-    def _update_kitsune_ai(self, dt: float, enemy_center: Vector, direction: Vector, distance: float, bounds: Tuple[float, float]):
+    def _update_kitsune_ai(self, dt: float, enemy_center: Vector, direction: Vector, distance: float, bounds: Tuple[float, float], bullets=None):
+        """Kitsune AI: ranged mage that keeps distance from player and dodges bullets."""
         projectile_to_spawn = None
-
         self.fire_timer += dt
         move_speed = self.speed * self.get_status_multiplier("move_speed", default=1.0)
 
+        # --- Bullet dodge detection ---
+        dodge_vec = Vector(0, 0)
+        dodge_detect_radius = 180  # pixels — how far ahead to scan for bullets
+        if bullets:
+            for b in bullets:
+                # Vector from bullet to kitsune center
+                to_kit = enemy_center - b.pos
+                dist_to_bullet = to_kit.length()
+                if dist_to_bullet > dodge_detect_radius or dist_to_bullet < 1:
+                    continue
+                # Check if bullet is heading towards kitsune
+                if b.velocity.length() < 1:
+                    continue
+                bullet_dir = b.velocity.normalize()
+                # Dot product: positive means bullet is heading towards us
+                dot = bullet_dir.x * to_kit.x + bullet_dir.y * to_kit.y
+                if dot <= 0:
+                    continue  # bullet heading away
+                # Perpendicular dodge direction (strafe away from bullet trajectory)
+                perp = Vector(-bullet_dir.y, bullet_dir.x)
+                # Choose direction that moves away from bullet center
+                side = perp.x * to_kit.x + perp.y * to_kit.y
+                if side < 0:
+                    perp = Vector(bullet_dir.y, -bullet_dir.x)
+                # Stronger dodge when bullet is closer
+                urgency = 1.0 - (dist_to_bullet / dodge_detect_radius)
+                dodge_vec += perp * urgency
+
+        # Normalize aggregate dodge
+        is_dodging = dodge_vec.length() > 0.1
+        if is_dodging:
+            dodge_vec = dodge_vec.normalize()
+
+        # --- Movement logic ---
+        ideal_distance = (self.escape_distance + self.attack_range) / 2  # sweet spot ~450px
+
+        move_vec = Vector(0, 0)
+
         if distance < self.escape_distance:
+            # Too close — run away from player
             self.ai_state = "escape"
             if distance > 0:
-                escape_direction = (enemy_center - self.target_pos).normalize()
-                self.pos = self.pos + escape_direction * (move_speed * dt)
-
-                if escape_direction.x < 0:
-                    self.facing = -1
-                else:
-                    self.facing = 1
-
-        elif distance < self.attack_range:
-            self.ai_state = "ranged_attack"
-
-            if direction.x < 0:
-                self.facing = -1
-            else:
-                self.facing = 1
-
-            if self.fire_timer >= self.fire_cooldown:
-                self.fire_timer = 0.0
-                fire_spawn_pos = Vector(enemy_center.x - 80, enemy_center.y - 80)
-                projectile_to_spawn = EnemyProjectileEntity(
-                    pos=fire_spawn_pos,
-                    target_pos=self.target_pos,
-                    fire_textures=self.fire_textures,
-                )
-
+                move_vec = (enemy_center - self.target_pos).normalize()
+        elif distance > self.attack_range:
+            # Too far — close in to attack range but not melee
+            self.ai_state = "reposition"
+            if distance > 0:
+                move_vec = direction.normalize() * 0.5  # approach slowly
         else:
-            self.ai_state = "approach"
-            if distance > 60:
-                move_vec = direction.normalize() * (move_speed * dt)
-                self.pos = self.pos + move_vec
+            # In attack range — strafe laterally to be unpredictable
+            self.ai_state = "ranged_attack"
+            # Gentle lateral drift (perpendicular to player direction)
+            if direction.length() > 0:
+                d_norm = direction.normalize()
+                lateral = Vector(-d_norm.y, d_norm.x)
+                # Oscillate direction using fire_timer as a simple clock
+                lateral_sign = 1.0 if math.sin(self.fire_timer * 2.0) > 0 else -1.0
+                move_vec = lateral * lateral_sign * 0.4
+                # Also nudge toward ideal distance
+                dist_error = distance - ideal_distance
+                move_vec += d_norm * (dist_error / self.attack_range) * 0.3
 
-                if direction.x < 0:
-                    self.facing = -1
-                else:
-                    self.facing = 1
+        # Blend dodge into movement (dodge has high priority)
+        if is_dodging:
+            move_vec = move_vec * 0.2 + dodge_vec * 1.5  # dodge dominates
+
+        if move_vec.length() > 0:
+            self.pos = self.pos + move_vec.normalize() * (move_speed * dt)
+
+        # Face the player
+        if direction.x < 0:
+            self.facing = -1
+        else:
+            self.facing = 1
+
+        # --- Fire projectile ---
+        if distance <= self.attack_range * 1.2 and self.fire_timer >= self.fire_cooldown:
+            self.fire_timer = 0.0
+            fire_spawn_pos = Vector(enemy_center.x - 80, enemy_center.y - 80)
+            projectile_to_spawn = EnemyProjectileEntity(
+                pos=fire_spawn_pos,
+                target_pos=self.target_pos,
+                fire_textures=self.fire_textures,
+            )
 
         self.pos.x = max(0, min(self.pos.x, bounds[0] - self.size[0]))
         # Clamp Y to walkable band (same rule as player)

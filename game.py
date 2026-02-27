@@ -229,7 +229,7 @@ class GameWidget(Widget):
         # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
             if not special_enemy.is_dying:
-                projectile = special_enemy.update(dt, player_center, (self.width, self.height))
+                projectile = special_enemy.update(dt, player_center, (self.width, self.height), bullets=self.bullets)
                 if projectile:  # Kitsune spawned a fire projectile
                     self.enemy_projectiles.append(projectile)
                 self._update_enemy_state(special_enemy)
