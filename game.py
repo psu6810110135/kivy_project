@@ -56,6 +56,19 @@ class GameWidget(Widget):
         self.fire_timer = 0.0
         self.firing = False
 
+        # Level-up selection overlay (Phase A)
+        self.levelup_active = False
+        self.pending_levelups = 0
+        self.levelup_choices = []
+        self.levelup_choice_labels = {
+            "str": "STR +1  (Damage +)",
+            "dex": "DEX +1  (Fire Rate +)",
+            "agi": "AGI +1  (Move Speed +)",
+            "int": "INT +1  (Skill Cooldown -)",
+            "vit": "VIT +1  (Max HP +)",
+            "luck": "LUCK +1 (Crit / Drop +)",
+        }
+
         # Game timer
         self.game_time = 0.0
         self.time_speed_multiplier = 1.0  # Normal speed, can be increased in debug mode
@@ -111,6 +124,11 @@ class GameWidget(Widget):
     def _on_key_down(self, keyboard, keycode, text, modifiers):
         key = keycode[1]
 
+        if self.levelup_active:
+            if key in ('1', '2', '3'):
+                self._apply_levelup_choice(int(key) - 1)
+            return True
+
         if key == '9':
             self.debug_mode = not self.debug_mode
             if not self.debug_mode:
@@ -148,19 +166,6 @@ class GameWidget(Widget):
             self.time_speed_multiplier = speeds[(current_idx + 1) % len(speeds)]
             return True
 
-        if not self.debug_mode and key in ('1', '2', '3', '4', '5', '6'):
-            stat_key_map = {
-                '1': 'str',
-                '2': 'dex',
-                '3': 'agi',
-                '4': 'int',
-                '5': 'vit',
-                '6': 'luck',
-            }
-            if self.player.allocate_stat(stat_key_map[key]):
-                self._sync_combat_from_player()
-            return True
-
         self.pressed_keys.add(key)
         return True
 
@@ -170,7 +175,7 @@ class GameWidget(Widget):
 
     def on_touch_down(self, touch):
         if touch.button == 'left':
-            if self.player.is_dead:
+            if self.player.is_dead or self.levelup_active:
                 return True
             self.player.start_shooting()
             self.firing = True
@@ -186,6 +191,12 @@ class GameWidget(Widget):
         return super().on_touch_up(touch)
 
     def update(self, dt: float):
+        if self.levelup_active:
+            self._update_progression_hud()
+            self._draw_scene()
+            self._update_debug(0.0)
+            return
+
         # Update game time (stop at max duration)
         if self.game_time < self.GAME_DURATION:
             self.game_time += dt * self.time_speed_multiplier
@@ -290,7 +301,7 @@ class GameWidget(Widget):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
                     if enemy_died:
-                        self.player.add_experience(self._get_enemy_exp_reward(enemy))
+                        self._grant_player_exp(self._get_enemy_exp_reward(enemy))
                     hit = True
                     break
             if not hit:
@@ -302,7 +313,7 @@ class GameWidget(Widget):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
                         if enemy_died:
-                            self.player.add_experience(self._get_enemy_exp_reward(se))
+                            self._grant_player_exp(self._get_enemy_exp_reward(se))
                         hit = True
                         break
             if hit:
@@ -516,6 +527,9 @@ class GameWidget(Widget):
             # Draw timer at top center
             self._draw_timer()
 
+            if self.levelup_active:
+                self._draw_levelup_overlay()
+
             # Debug hitboxes
             if self.debug_mode:
                 # Player Hitbox
@@ -704,6 +718,68 @@ class GameWidget(Widget):
         bullet.damage = self.player.bullet_damage * (1.75 if is_crit else 1.0)
         bullet.is_crit = is_crit
         self.bullets.append(bullet)
+
+    def _grant_player_exp(self, amount: int):
+        levels_gained = self.player.add_experience(amount)
+        if levels_gained <= 0:
+            return
+
+        self.pending_levelups += levels_gained
+        self._sync_combat_from_player()
+        if not self.levelup_active:
+            self._open_next_levelup()
+
+    def _open_next_levelup(self):
+        if self.pending_levelups <= 0:
+            self.levelup_active = False
+            self.levelup_choices = []
+            return
+
+        self.pending_levelups -= 1
+        self.levelup_active = True
+        choice_pool = ["str", "dex", "agi", "int", "vit", "luck"]
+        self.levelup_choices = random.sample(choice_pool, 3)
+
+        self.player.stop_shooting()
+        self.firing = False
+
+    def _apply_levelup_choice(self, choice_index: int):
+        if not self.levelup_active:
+            return
+        if choice_index < 0 or choice_index >= len(self.levelup_choices):
+            return
+
+        chosen_stat = self.levelup_choices[choice_index]
+        if self.player.allocate_stat(chosen_stat):
+            self._sync_combat_from_player()
+
+        if self.pending_levelups > 0:
+            self._open_next_levelup()
+        else:
+            self.levelup_active = False
+            self.levelup_choices = []
+
+    def _draw_levelup_overlay(self):
+        overlay_margin_x = self.width * 0.18
+        panel_width = self.width - (overlay_margin_x * 2)
+        panel_height = self.height * 0.42
+        panel_x = overlay_margin_x
+        panel_y = (self.height - panel_height) / 2
+
+        Color(0, 0, 0, 0.55)
+        Rectangle(pos=(0, 0), size=self.size)
+
+        Color(0.12, 0.12, 0.16, 0.95)
+        Rectangle(pos=(panel_x, panel_y), size=(panel_width, panel_height))
+
+        self._draw_label_at("LEVEL UP - Choose 1 Upgrade", self.width / 2, panel_y + panel_height - 70, (1, 1, 0.6, 1))
+        self._draw_label_at("Press 1 / 2 / 3 to select", self.width / 2, panel_y + panel_height - 118, (0.9, 0.9, 0.9, 1))
+
+        option_spacing = panel_width / 3
+        for idx, stat_key in enumerate(self.levelup_choices):
+            cx = panel_x + option_spacing * (idx + 0.5)
+            text = f"[{idx + 1}] {self.levelup_choice_labels.get(stat_key, stat_key.upper())}"
+            self._draw_label_at(text, cx, panel_y + panel_height * 0.42, (0.8, 1, 0.9, 1))
 
     def _get_enemy_exp_reward(self, enemy) -> int:
         if isinstance(enemy, SpecialEnemyEntity):

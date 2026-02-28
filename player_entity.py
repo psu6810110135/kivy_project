@@ -96,22 +96,22 @@ class PlayerEntity(Entity):
 
         self.hp = max(1.0, min(self.max_hp, self.max_hp * hp_ratio))
 
-    def add_experience(self, amount: int) -> bool:
+    def add_experience(self, amount: int) -> int:
         if amount <= 0:
-            return False
+            return 0
 
         self.exp += amount
-        leveled_up = False
+        levels_gained = 0
 
         while self.exp >= self.next_exp:
             self.exp -= self.next_exp
             self.level += 1
             self.stat_points += 3
-            leveled_up = True
+            levels_gained += 1
             self.next_exp = self._exp_required_for_level(self.level)
             self.hp = min(self.max_hp, self.hp + self.max_hp * 0.2)
 
-        return leveled_up
+        return levels_gained
 
     def allocate_stat(self, stat_name: str) -> bool:
         if self.stat_points <= 0:
