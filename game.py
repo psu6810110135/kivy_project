@@ -4,13 +4,53 @@ import math
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
-from kivy.graphics import Color, Rectangle, Line
+from kivy.graphics import Color, Rectangle, Line, PushMatrix, PopMatrix, Rotate
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
 from kivy.core.text import Label as CoreLabel
 
 from entities import PlayerEntity, BulletEntity, EnemyEntity, SpecialEnemyEntity, EnemyProjectileEntity
+
+
+class ExpOrb:
+    """Collectible EXP orb rendered as a green diamond and pulled by player magnet radius."""
+
+    def __init__(self, pos: Vector, exp_value: int):
+        self.pos = Vector(pos.x, pos.y)
+        self.exp_value = exp_value
+        self.size = 18
+        self.base_pull_speed = 240
+        self.max_pull_speed = 820
+
+    def get_hitbox(self):
+        half = self.size / 2
+        return (self.pos.x - half, self.pos.y - half, self.size, self.size)
+
+    def update(self, dt: float, player_center: Vector, pull_radius: float):
+        direction = player_center - self.pos
+        distance = direction.length()
+        if distance <= 0.001 or distance > pull_radius:
+            return
+
+        strength = 1.0 - (distance / pull_radius)
+        pull_speed = self.base_pull_speed + (self.max_pull_speed - self.base_pull_speed) * strength
+        self.pos += direction.normalize() * (pull_speed * dt)
+
+    def draw(self, canvas):
+        half = self.size / 2
+        with canvas:
+            Color(0.25, 1.0, 0.3, 0.95)
+            PushMatrix()
+            Rotate(angle=45, origin=(self.pos.x, self.pos.y))
+            Rectangle(pos=(self.pos.x - half, self.pos.y - half), size=(self.size, self.size))
+            PopMatrix()
+
+            Color(0.85, 1.0, 0.88, 0.95)
+            PushMatrix()
+            Rotate(angle=45, origin=(self.pos.x, self.pos.y))
+            Rectangle(pos=(self.pos.x - half * 0.35, self.pos.y - half * 0.35), size=(self.size * 0.35, self.size * 0.35))
+            PopMatrix()
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
@@ -29,9 +69,13 @@ class GameWidget(Widget):
         self.enemies: List[EnemyEntity] = []
         self.enemy_spawn_counter = 0
         self.spawn_timer = 0.0
-        self.base_spawn_interval = 2.0  # Starting spawn interval
+        self.base_spawn_interval = 1.5  # Harder base spawn rate
         self.spawn_interval = self.base_spawn_interval
+        self.min_spawn_interval = 0.22
+        self.enemy_speed_multiplier = 1.0
         self.bullets: List[BulletEntity] = []
+        self.exp_orbs: List[ExpOrb] = []
+        self.exp_pickup_radius = 52.0
         
         # Special enemy spawning (every 3 minutes, no max limit)
         self.special_enemies: List[SpecialEnemyEntity] = []
@@ -204,9 +248,11 @@ class GameWidget(Widget):
                 self.game_time = self.GAME_DURATION
 
             # Update spawn interval based on elapsed time (faster spawning over time)
-            # At 0:00 -> 2.0s interval, at 15:00 -> 0.5s interval
+            # At 0:00 -> 1.5s interval, at 15:00 -> 0.22s interval
             progress = self.game_time / self.GAME_DURATION  # 0.0 to 1.0
-            self.spawn_interval = self.base_spawn_interval - (progress * 1.5)  # 2.0 -> 0.5
+            target_interval = self.base_spawn_interval - (progress * 1.45)
+            self.spawn_interval = max(self.min_spawn_interval, target_interval)
+            self.enemy_speed_multiplier = 1.0 + (progress * 0.85)
 
         self._update_progression_hud()
 
@@ -240,7 +286,11 @@ class GameWidget(Widget):
         self.spawn_timer += dt
         if self.spawn_timer >= self.spawn_interval:
             self.spawn_timer -= self.spawn_interval
-            self._spawn_enemy()
+            progress = self.game_time / self.GAME_DURATION if self.GAME_DURATION > 0 else 0.0
+            spawn_count = 1 + int(progress * 2.5)
+            spawn_count = max(1, min(4, spawn_count))
+            for _ in range(spawn_count):
+                self._spawn_enemy()
 
         # Spawn special enemies every 3 minutes (affected by time speed multiplier)
         self.special_spawn_timer += dt * self.time_speed_multiplier
@@ -251,20 +301,21 @@ class GameWidget(Widget):
         # Update all enemies (target player's hitbox center for accurate pathing/aim)
         pbox = self.player.get_hitbox()
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
+        enemy_dt = dt * self.enemy_speed_multiplier
         for enemy in self.enemies[:]:
-            enemy.update(dt, player_center, (self.width, self.height))
+            enemy.update(enemy_dt, player_center, (self.width, self.height))
             if not enemy.is_dying:
                 self._update_enemy_state(enemy)
 
         # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
             if not special_enemy.is_dying:
-                projectile = special_enemy.update(dt, player_center, (self.width, self.height), bullets=self.bullets)
+                projectile = special_enemy.update(enemy_dt, player_center, (self.width, self.height), bullets=self.bullets)
                 if projectile:  # Kitsune spawned a fire projectile
                     self.enemy_projectiles.append(projectile)
                 self._update_enemy_state(special_enemy)
             else:
-                special_enemy.update(dt, player_center, (self.width, self.height))
+                special_enemy.update(enemy_dt, player_center, (self.width, self.height))
 
         # Light separation so enemies don't stack
         self._separate_enemies()
@@ -301,7 +352,7 @@ class GameWidget(Widget):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
                     if enemy_died:
-                        self._grant_player_exp(self._get_enemy_exp_reward(enemy))
+                        self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
                     hit = True
                     break
             if not hit:
@@ -313,7 +364,7 @@ class GameWidget(Widget):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
                         if enemy_died:
-                            self._grant_player_exp(self._get_enemy_exp_reward(se))
+                            self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
                         hit = True
                         break
             if hit:
@@ -344,6 +395,21 @@ class GameWidget(Widget):
             # Remove if off-screen
             if proj.pos.x < 0 or proj.pos.x > self.width or proj.pos.y < 0 or proj.pos.y > self.height:
                 self.enemy_projectiles.remove(proj)
+
+        # Update exp orbs: pull toward player and collect on touch
+        pull_radius = self._get_exp_pull_radius()
+        pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius)
+        for orb in self.exp_orbs[:]:
+            orb.update(dt, player_center, pull_radius)
+            if self._rects_intersect(orb.get_hitbox(), pickup_box):
+                self._grant_player_exp(orb.exp_value)
+                self.exp_orbs.remove(orb)
+                continue
+
+            # Cleanup only if somehow far outside the world
+            margin = 300
+            if orb.pos.x < -margin or orb.pos.x > self.width + margin or orb.pos.y < -margin or orb.pos.y > self.height + margin:
+                self.exp_orbs.remove(orb)
         
         # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
@@ -520,6 +586,10 @@ class GameWidget(Widget):
             for b in self.bullets:
                 b.draw(self.canvas)
 
+            # Draw exp orbs
+            for orb in self.exp_orbs:
+                orb.draw(self.canvas)
+
             # Draw enemy projectiles
             for proj in self.enemy_projectiles:
                 proj.draw(self.canvas)
@@ -548,6 +618,17 @@ class GameWidget(Widget):
                 for proj in self.enemy_projectiles:
                     px, py, pw, ph = proj.get_hitbox()
                     Line(rectangle=(px, py, pw, ph), width=1)
+
+                # EXP Orb hitboxes and pull radius
+                Color(0.2, 1, 0.3, 0.85)
+                for orb in self.exp_orbs:
+                    ox, oy, ow, oh = orb.get_hitbox()
+                    Line(rectangle=(ox, oy, ow, oh), width=1)
+                Color(0.2, 1, 0.3, 0.25)
+                pbox = self.player.get_hitbox()
+                center_x = pbox[0] + pbox[2] / 2
+                center_y = pbox[1] + pbox[3] / 2
+                Line(circle=(center_x, center_y, self._get_exp_pull_radius()), width=1)
 
                 # Enemy Hitbox
                 Color(0, 0, 1, 0.8) # Blue for enemy
@@ -673,9 +754,33 @@ class GameWidget(Widget):
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
         god_str = "  [GODMODE ON]" if self.god_mode else ""
-        info = f"FPS: {fps:.1f}{god_str}\nBullets: {len(self.bullets)}\nEnemies: {len(self.enemies)}\nSpecial Enemies: {len(self.special_enemies)}\nEnemy Projectiles: {len(self.enemy_projectiles)}"
+        info = (
+            f"FPS: {fps:.1f}{god_str}\n"
+            f"Bullets: {len(self.bullets)}\n"
+            f"Enemies: {len(self.enemies)}\n"
+            f"Special Enemies: {len(self.special_enemies)}\n"
+            f"Enemy Projectiles: {len(self.enemy_projectiles)}\n"
+            f"EXP Orbs: {len(self.exp_orbs)}"
+        )
         if self.debug_mode:
-            info += f"\nTime Speed: {self.time_speed_multiplier}x\nSpawn Interval: {self.spawn_interval:.2f}s"
+            active_statuses = self.player.status.to_dict()
+            status_text = "none"
+            if active_statuses:
+                status_parts = []
+                for name, payload in active_statuses.items():
+                    status_parts.append(f"{name}({payload['duration']:.1f}s x{payload['stacks']})")
+                status_text = ", ".join(status_parts)
+
+            info += (
+                f"\nTime Speed: {self.time_speed_multiplier}x"
+                f"\nSpawn Interval: {self.spawn_interval:.2f}s"
+                f"\nEnemy Speed x: {self.enemy_speed_multiplier:.2f}"
+                f"\nEXP Pull Radius: {self._get_exp_pull_radius():.0f}"
+                f"\nPlayer LV:{self.player.level} EXP:{int(self.player.exp)}/{int(self.player.next_exp)} SP:{self.player.stat_points}"
+                f"\nPlayer HP:{self.player.hp:.0f}/{self.player.max_hp:.0f} DMG:{self.player.bullet_damage:.1f}"
+                f"\nStats STR:{self.player.str} DEX:{self.player.dex} AGI:{self.player.agi} INT:{self.player.int} VIT:{self.player.vit} LUCK:{self.player.luck}"
+                f"\nStatus Effects: {status_text}"
+            )
         self.debug_label.text = info
         if self.debug_mode:
             self.pos_label.text = f"Player: ({self.player.x:.1f}, {self.player.y:.1f})"
@@ -742,6 +847,26 @@ class GameWidget(Widget):
 
         self.player.stop_shooting()
         self.firing = False
+
+    def _drop_exp_orbs(self, enemy, total_exp: int):
+        if total_exp <= 0:
+            return
+
+        hitbox = enemy.get_hitbox()
+        center = Vector(hitbox[0] + hitbox[2] / 2, hitbox[1] + hitbox[3] / 2)
+
+        chunk_size = 12
+        orb_count = max(1, min(8, math.ceil(total_exp / chunk_size)))
+        remaining = total_exp
+        for idx in range(orb_count):
+            orb_value = chunk_size if idx < orb_count - 1 else max(1, remaining)
+            remaining -= orb_value
+
+            offset = Vector(random.uniform(-24, 24), random.uniform(-18, 18))
+            self.exp_orbs.append(ExpOrb(center + offset, orb_value))
+
+    def _get_exp_pull_radius(self) -> float:
+        return 150.0 + (self.player.luck * 14.0) + (self.player.int * 8.0)
 
     def _apply_levelup_choice(self, choice_index: int):
         if not self.levelup_active:
