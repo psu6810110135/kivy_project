@@ -1,155 +1,251 @@
-# Shooter Game Project (Kivy 2.5D Shooter)
+# Kivy 2.5D Shooter — Implementation Status & Detailed Plan
 
-เอกสารนี้สรุปภาพรวมแนวคิด, ระบบหลัก, รายชื่อฟังก์ชันสำคัญ และแผนพัฒนาทีละเฟส สำหรับเกมแนว Defense Shooter + Horde Survival ที่สร้างด้วย Kivy
+อัปเดตล่าสุด: 2026-02-28  
+เอกสารนี้อ้างอิงจากโค้ดปัจจุบันจริงในโปรเจ็กต์ เพื่อสรุปว่าอะไร **ทำแล้ว** / **ยังไม่ทำ** และวางแผนต่อแบบละเอียด โดยใช้ asset ที่มีอยู่ใน `game_picture/` ให้มากที่สุด
 
-## ภาพรวมเกม
+## 1) Current Scope (จากโค้ดปัจจุบัน)
 
-- มุมมอง: 2.5D side-scrolling with depth (เดินซ้าย/ขวา + ขึ้น/ลงเพื่อเลี่ยงกระสุน)
-- รูปแบบ: Wave-based, ศัตรูถาโถม, มีบอส, ตายแล้วจบ (roguelite)
-- ลูปหลัก: เริ่มเวฟ → ยิงศัตรูเก็บ EXP → เลเวลอัพเลือกอัป Status → ศัตรูเก่งขึ้น/เยอะขึ้น → พบบอส → ดรอปไอเท็มพิเศษ → ตาย/ชนะเวฟ
+- เกมเป็น 2.5D side-scrolling shooter แบบ survival timer 15 นาที
+- มีผู้เล่น 1 ตัว, ศัตรูปกติ 4 แบบ, ศัตรูพิเศษ 3 แบบ
+- ใช้ `GameWidget` เป็น game loop หลัก (`Clock.schedule_interval` 60 FPS)
+- วาดด้วย Kivy canvas โดยตรง (ไม่สร้าง widget ต่อ entity)
 
-### Gameplay Loop (Mermaid)
+## 2) Implemented vs Not Implemented
 
-```mermaid
-flowchart LR
-    start([เริ่มเวฟ]) --> spawn[เกิดศัตรูตามเวลา/เวฟ]
-    spawn --> fight[ยิง/หลบศัตรู]
-    fight --> exp[เก็บ EXP + ของดรอป]
-    exp -->|EXP เต็ม| levelup[เลเวลอัพ → เลือกสเตตัส]
-    levelup --> buff[ค่าสเตตัสปรับผลยิง/เลือด/ความเร็ว]
-    buff --> scale[ศัตรูแข็งแกร่งขึ้นตามเวลา]
-    scale --> boss[บอสตามรอบเวลา]
-    boss --> reward[ของรางวัลบอส/อาวุธใหม่]
-    reward --> start
-    fight -->|HP หมด| gameover([Game Over])
-```
+### ✅ Implemented แล้ว
 
-## การติดตั้ง & รัน
+#### Core Loop / Input / Render
 
-1. ติดตั้ง Python 3.9+ และ Kivy
+- [x] Game loop 60 FPS ใน `game.py`
+- [x] Input keyboard (`WASD`, `Shift`, debug keys)
+- [x] Mouse hold ยิงต่อเนื่อง (left click)
+- [x] พื้นหลัง + redraw scene ทุกเฟรม
+- [x] Render order แบบ danger + Y-sort + spawn order
 
-```bash
-pip install kivy
-```
+#### Player
 
-2. รันเกม (ไฟล์หลักสมมติชื่อ `main.py`)
+- [x] Player sprite animation (`idle/walk/run/shot/hurt/dead`)
+- [x] Clamp พื้นที่เดินให้อยู่ใน walkable Y band
+- [x] HP และ death state
+- [x] ยิงจาก muzzle + aim clamp (cone)
 
-```bash
-python main.py
-```
+#### Enemies & Combat
 
-## โครงสร้างโค้ด (Refactor ล่าสุด)
+- [x] Spawn ศัตรูจากซ้าย/ขวานอกจอ
+- [x] Spawn rate เร็วขึ้นตามเวลา (2.0s → 0.5s)
+- [x] ศัตรูปกติ 4 archetype พร้อม stat ต่างกัน
+- [x] ศัตรูพิเศษ 3 แบบ + stat เฉพาะ
+- [x] Kitsune ranged projectile + dodge behavior
+- [x] Bullet ↔ enemy collision
+- [x] Enemy melee ↔ player collision
+- [x] Enemy projectile ↔ player collision
+- [x] Enemy separation (spatial grid + soft repulsion)
 
-- `entities.py`: จุดรวม export (compatibility layer) เพื่อให้ import เดิมยังใช้ได้
-- `entity_base.py`: คลาส `Entity` พื้นฐาน + status hooks
-- `status_system.py`: ระบบสถานะ (`StatusComponent`, `StatusEffect`) สำหรับทุก entity
-- `player_entity.py`: โค้ดเฉพาะผู้เล่น (movement/animation/shoot state)
-- `enemy_entities.py`: โค้ด `EnemyEntity` และ `SpecialEnemyEntity` + AI เฉพาะ
-- `projectile_entities.py`: โค้ดกระสุนผู้เล่นและ projectile ศัตรู
+#### Status Infrastructure
 
-### ระบบ Status
+- [x] `StatusComponent` / `StatusEffect` ใช้งานได้แล้ว
+- [x] `update_statuses(dt)` ถูกเรียกใน player/enemy/projectile
+- [x] multiplier modifiers พร้อมต่อยอด status effect
 
-- ทุก entity มี `status` ในตัว พร้อมเมธอด:
-  - `add_status(name, duration, potency=1.0, stacks=1, modifiers=None)`
-  - `has_status(name)` / `remove_status(name)`
-  - `get_status_multiplier(stat_name, default=1.0)`
-- ใน `update()` ของ Player/Enemy/SpecialEnemy มีการเรียก `update_statuses(dt)` แล้ว
-- รองรับการต่อยอดพฤติกรรมเฉพาะ เช่น Slow, Haste, Burn, Shield โดยไม่ต้องแก้ game loop หลัก
+#### Debug / Testing Helpers
 
-## สเตตัส RPG และผลลัพธ์ในเกม
+- [x] Debug mode (`9`) + hitbox/path/FPS
+- [x] Spawn ศัตรู debug (`+`, `1`, `2`, `3`)
+- [x] Time speed debug cycle (`-`)
+- [x] God mode (`8`)
 
-| Status | ผลต่อเกม                                    |
-| ------ | ------------------------------------------- |
-| STR    | เพิ่มดาเมจ/แรงกระเด็นศัตรู                  |
-| INT    | ลดคูลดาวน์สกิล, เพิ่มระยะเวลาโดรน/ป้อม      |
-| AGI    | เพิ่มความเร็วเคลื่อนที่และรีโหลด            |
-| VIT    | เพิ่ม Max HP และ HP regen                   |
-| DEX    | เพิ่มอัตราการยิงและความแม่นยำ (ลด spread)   |
-| LUCK   | เพิ่มโอกาส Critical และอัตราดรอปไอเท็ม/เงิน |
+### ❌ ยังไม่ Implement (สำคัญ)
 
-## ระบบหลักที่ควรมี
+#### Progression / RPG
 
-- **Input & Game Loop**: `Clock.schedule_interval` อัปเดต 60 FPS, รับคีย์บอร์ด/จอย
-- **Rendering**: วาดด้วย `Canvas` (หลีกเลี่ยง widget ต่อศัตรู 1 ตัว), Z-sorting ตามแกน Y เพื่อให้ตัวล่างทับตัวบน
-- **Entity Base**: จัดการตำแหน่ง x,y,z และการวาดสไปรต์/เรกแทงเกิล
-- **Player**: เก็บสเตตัส, ยิง/คูลดาวน์, ระบบเลเวลอัพ/อัปสเตตัส, HP/รีเจน
-- **Enemy Manager**: สุ่มเกิดศัตรูตามเวลา/ความยาก, รูปแบบเดินเข้าหาผู้เล่น, บอสตามรอบเวลา/เวฟ
-- **Projectile/Bullet Pool**: ยิงตามค่า DEX/AGI, ใช้ object pooling เพื่อลด allocation
-- **Collision System**: AABB สำหรับ กระสุน↔ศัตรู, ศัตรู↔ผู้เล่น
-- **Progression**: EXP, Level, Popup เลือกสเตตัส (pause เกมชั่วคราวด้วย `Clock.unschedule`), ดรอปไอเท็มจาก LUCK
-- **UI**: แถบ HP/EXP, ปุ่ม/คีย์สกิล, หน้าจอ Game Over, เมนูเริ่มเกม
+- [ ] ระบบ EXP และ Level-up
+- [ ] ระบบค่าสเตตัส RPG (STR/DEX/AGI/INT/VIT/LUCK) แบบมีผลจริง
+- [ ] ระบบเลือกอัปเกรดตอนเลเวลอัป (pause + choose)
 
-## รายชื่อฟังก์ชัน/เมธอดที่แนะนำ
+#### Skill-based System
 
-- `GameWidget.update(dt)`: ลูปหลัก อัปเดตอินพุต, ฟิสิกส์ง่ายๆ, ยิงอัตโนมัติ, เรนเดอร์
-- `GameWidget.spawn_enemy(dt)`: สปาวน์ศัตรูเพิ่มความยากตามเวลา
-- `GameWidget._on_keyboard_down/_on_keyboard_up`: เก็บสถานะปุ่ม
-- `Player.shoot()` / `Player.can_shoot(dt)`: ยิงกระสุนตามคูลดาวน์ที่ขึ้นกับ DEX/AGI
-- `Player.level_up(choice)`: อัปสเตตัส, รีคอมพิวต์ค่าส่งผลเกม (speed, damage, fire rate)
-- `EnemyManager.update(dt)`: ขยับศัตรูเข้าหาผู้เล่น, เรียกบอสเมื่อถึงเวลา
-- `CollisionSystem.resolve()`: ตรวจชน bullet↔enemy, player↔enemy, คำนวณดาเมจ/คริ/น็อคแบ็กจาก STR & LUCK
-- `Renderer.draw_entities()`: เรียงตามแกน Y (z-order) แล้ววาด
+- [ ] Active skills (กดใช้ + cooldown)
+- [ ] Passive skills (ติดตัวตลอดรอบ)
+- [ ] Skill tree / card pool / rarity
 
-## แผนการพัฒนา (Phases)
+#### Loot / Economy
 
-**Phase 0: Setup**
+- [ ] ดรอปไอเท็มจากศัตรู/บอส
+- [ ] เงิน/แต้ม + pickup magnet radius
+- [ ] rarity & affix system
+- [ ] ใช้หน้าจอ upgrade/shop จริงในเกม
 
-- เตรียม env Python/Kivy, สร้างโครงโปรเจ็กต์, ตั้ง Clock 60 FPS, หน้าจอเปล่าเดินได้
+#### UI Flow (ใช้รูปที่มี)
 
-**Phase 1: Core Loop & Movement**
+- [ ] Main menu flow จริง
+- [ ] Pause menu flow จริง
+- [ ] Victory / Mission Failed screens
+- [ ] HUD เต็มรูปแบบ (weapon icon, money panel, xp bar)
+- [ ] Inventory & Stats screen
 
-- ระบบอินพุต (คีย์บอร์ด/จอย), การเคลื่อนที่ 2.5D, กล้อง/ขอบจอ, เรนเดอร์พื้นฐานด้วย Canvas
+#### Content/Polish
 
-**Phase 2: Combat**
+- [ ] สลับตัวละคร `Soldier_1` / `Soldier_2`
+- [ ] ระบบอาวุธหลายชนิด
+- [ ] Sound/SFX/BGM
+- [ ] Save meta progression
 
-- ยิงกระสุน, object pool, collision bullet↔enemy, STR/DEX/AGI มีผลดาเมจ/ความถี่/ความเร็วเดิน
+## 3) Asset-Aware Plan (ยึดของที่มีใน `game_picture`)
 
-**Phase 3: Progression**
+ใช้ทรัพยากรเดิมโดยตรง:
 
-- EXP/เลเวล, Popup เลือกสเตตัส, scaling ศัตรูตามเวลา/เวฟ, บอสและของดรอปพิเศษ, LUCK มีผลดรอป/คริ
+- `game_picture/ui/Main menu` → หน้าเริ่มเกม/ปุ่ม Start/Settings/Exit
+- `game_picture/ui/Pause menu` → pause overlay + resume/restart
+- `game_picture/ui/Mission Failed` → game over screen
+- `game_picture/ui/Victory` → clear screen
+- `game_picture/ui/HUD/CHARACTER HUD` → HP/EXP/level panel
+- `game_picture/ui/HUD/MONEY PANEL` → เงิน/score
+- `game_picture/ui/HUD/WEAPON ICONS` → icon weapon + skill slot
+- `game_picture/ui/Inventory and Stats` → stats detail + loadout
+- `game_picture/ui/Upgrade` → level-up choice / shop / reroll
+- `game_picture/ui/Bonus` → item/skill card visual
+- `game_picture/background/bg1.png`, `bg2.png`, `bg3.png` → map tier/phase
 
-**Phase 4: Content & Polish**
+## 4) Detailed Development Plan (Skill + Loot first)
 
-- สไปรต์/แอนิเมชัน, Z-sorting สวยงาม, UI HP/EXP/สกิล, เอฟเฟกต์เสียง, ปรับสมดุล, โปรไฟล์ประสิทธิภาพ
+## Phase A — Progression Backbone (2-3 วัน)
 
-## Roadmap (ละเอียด)
+เป้าหมาย: ทำระบบเลเวลและค่าสเตตัสให้ครบก่อน เพื่อรองรับ skill/loot
 
-**Phase 0: Setup & Skeleton**
+### งาน
 
-- [ ] ตั้ง virtualenv, ติดตั้ง Kivy
-- [ ] โครงไฟล์ `main.py`, `game.py`, `entities.py`, `systems/` (collision, renderer, enemy_manager)
-- [ ] ตั้ง `Clock.schedule_interval` 60 FPS, หน้าจอเปล่า, debug overlay (FPS, entity count)
+- เพิ่ม `PlayerProgression` (exp, level, next_exp, stat_points)
+- เพิ่มฟิลด์ stat จริง: `str`, `dex`, `agi`, `int`, `vit`, `luck`
+- สร้างฟังก์ชัน recalc derived stats:
+  - `bullet_damage`
+  - `fire_rate`
+  - `move_speed`
+  - `max_hp`
+  - `crit_chance`
+- ให้ศัตรูตายแล้วให้ EXP
 
-**Phase 1: Core Loop & Movement**
+### เกณฑ์จบ
 
-- [ ] อินพุตคีย์บอร์ด/จอย; pressed-keys set + key repeat
-- [ ] การเคลื่อนที่ 2.5D (ซ้าย/ขวา/ขึ้น/ลง) พร้อมขอบจอ/กล้อง
-- [ ] Entity base + z-order ตามแกน Y; renderer เรียงก่อนวาด
-- [ ] ทดสอบ perf กับ 200+ เอนทิตี dummy เพื่อเช็ค Canvas update
+- ฆ่าศัตรูแล้ว EXP เพิ่มได้
+- EXP เต็มแล้วเลเวลขึ้นและมีแต้มอัป
+- ค่าสเตตัสมีผลกับการยิง/เคลื่อนที่/เลือดจริง
 
-**Phase 2: Combat Foundation**
+## Phase B — Skill System (3-4 วัน)
 
-- [ ] ระบบยิง + คูลดาวน์ขึ้นกับ DEX/AGI; auto-fire toggle
-- [ ] Bullet object pool (reuse) + ค่า damage จาก STR, crit จาก LUCK
-- [ ] Collision AABB bullet↔enemy + knockback scale ตาม STR
-- [ ] EnemyManager: spawn timer, scaling ตามเวลา/เวฟ, pathing เข้าหาผู้เล่น
+เป้าหมาย: เพิ่มระบบ skill-based gameplay แบบชัดเจน
 
-**Phase 3: Progression & Economy**
+### โครงระบบ
 
-- [ ] ระบบ EXP/เลเวล; เกณฑ์เพิ่มตามเลเวล
-- [ ] Popup เลือกอัปสเตตัส (pause เกมด้วย unschedule/resume)
-- [ ] Loot/drop: โอกาสดรอปจาก LUCK, เงิน/ไอเท็มเติมเลือด
-- [ ] Balance pass แรก: fire rate cap, damage falloff, enemy HP scaling
+- สร้าง `skill_system.py`:
+  - `SkillDefinition`
+  - `ActiveSkillRuntime`
+  - `PassiveSkillRuntime`
+- เพิ่ม skill slots (เช่น 2 active + 3 passive)
+- เพิ่ม cooldown manager per skill
 
-**Phase 4: Boss & Specials**
+### Skill MVP ที่ควรเริ่ม
 
-- [ ] Trigger บอสตามนาที/เวฟ; pattern การยิง/กระโดดหลบง่ายๆ
-- [ ] รางวัลบอส: อาวุธใหม่/บัฟชั่วคราว, กล่องสุ่มเลือก 1 ใน 3
-- [ ] ศัตรูพิเศษ (speedster/tank/ranged) เพื่อเพิ่ม variety
+- Active 1: Dash (หลบเร็วระยะสั้น)
+- Active 2: Grenade / Shockwave (AoE)
+- Passive 1: Attack Speed Up
+- Passive 2: Lifesteal เล็กน้อย
+- Passive 3: Pickup Radius Up
 
-**Phase 5: UX/Polish**
+### UI ที่ใช้
 
-- [ ] UI: HP/EXP bar, skill cooldown, kill/crit feed, pause/menu, game over
-- [ ] สไปรต์/แอนิเมชัน + SFX พื้นฐาน (ยิง/โดน/ตาย/เลเวลอัพ)
-- [ ] ปรับบาลานซ์รอบสอง + โปรไฟล์ประสิทธิภาพ (ลด canvas ops, batch draw)
-- [ ] บันทึกสถิติรอบ (เวลารอด, kill, DPS, สเตตัสสุดท้าย)
+- ใช้ `game_picture/ui/HUD/WEAPON ICONS` เป็น skill icon slot
+- ใช้ `game_picture/ui/Upgrade` + `game_picture/ui/Bonus` เป็นหน้าจอเลือก skill
+
+### เกณฑ์จบ
+
+- กดใช้ active skill ได้และมี cooldown แสดง
+- passive skill มีผลทันทีเมื่อเลือก
+- มีระบบสุ่มตัวเลือก skill 3 ใบตอน level up
+
+## Phase C — Loot & Economy (3-4 วัน)
+
+เป้าหมาย: ให้ลูปการเล่น “ฆ่า → ดรอป → เก็บ → เก่งขึ้น” สมบูรณ์
+
+### โครงระบบ
+
+- สร้าง `loot_system.py`:
+  - `LootDropDefinition`
+  - `LootInstance`
+  - `DropTable`
+- item type MVP:
+  - Gold
+  - HP Orb
+  - Skill Essence (ใช้ reroll/upgrade)
+  - Temporary Buff pickup
+
+### Logic สำคัญ
+
+- โอกาสดรอปขึ้นกับ `luck`
+- rarity tiers: common/rare/epic/legendary
+- auto-pick เมื่อเข้า radius (radius โตจาก passive)
+- loot magnet effect (วิ่งเข้าผู้เล่น)
+
+### UI ที่ใช้
+
+- เงิน: `game_picture/ui/HUD/MONEY PANEL`
+- แจ้ง item pickup: `game_picture/ui/Bonus`
+- หน้าอัปเกรด/ซื้อ: `game_picture/ui/Upgrade`
+
+### เกณฑ์จบ
+
+- ศัตรูตายแล้วมีโอกาสดรอปของ
+- ผู้เล่นเก็บได้และเห็นผลทันที
+- เงิน/essence นำไปใช้ในระบบ upgrade ได้
+
+## Phase D — Menu Flow Integration (2-3 วัน)
+
+เป้าหมาย: เชื่อม UX ให้ครบก่อน polish
+
+### งาน
+
+- Main menu scene (`Main menu` assets)
+- Pause scene (`Pause menu` assets)
+- Mission failed scene (`Mission Failed` assets)
+- Victory scene (`Victory` assets)
+- Loading/transition (`Loading Screen` assets)
+
+### เกณฑ์จบ
+
+- เข้าเกม/หยุดเกม/จบเกมครบ flow
+- ไม่มี dead-end screen
+
+## Phase E — Balance & Content Expansion (ต่อเนื่อง)
+
+### งาน
+
+- เพิ่มอาวุธหลายแบบ (SMG/Shotgun/Rifle)
+- ใช้ `Soldier_2` เป็น alternative character
+- ปรับ balance enemy wave + boss timing
+- เพิ่ม minimap/level menu เมื่อพร้อม
+
+### เกณฑ์จบ
+
+- รอบ 15 นาทีเล่นได้ลื่น + มีเป้าหมายชัด
+- skill + loot ทำให้ build ต่างกันจริง
+
+## 5) Implementation Order (แนะนำให้ทำตามนี้)
+
+1. `player_entity.py` + `game.py` → ใส่ progression stats/exp/level
+2. เพิ่ม `skill_system.py` และต่อเข้ากับ game loop
+3. เพิ่ม `loot_system.py` และ entity pickup
+4. ค่อยเชื่อม UI assets (`HUD`, `Upgrade`, `Bonus`)
+5. ปิดท้ายด้วย menu/result flow (`Main menu`, `Pause`, `Victory`, `Mission Failed`)
+
+## 6) Risks / Notes
+
+- โค้ดตอนนี้รวม logic ใน `GameWidget` ค่อนข้างมาก ควรแยกเป็นระบบย่อยทีละส่วน (skill/loot/progression) ไม่ต้อง rewrite ทั้งหมดทันที
+- ก่อนเพิ่มฟีเจอร์หนัก ควรกำหนด data-driven config (dict/json) สำหรับ skill และ loot เพื่อบาลานซ์ง่าย
+- รักษา pattern เดิม: วาด canvas ตรง + ใช้ hitbox + clamp เดียวกันทุก entity
+
+## 7) Immediate Next Sprint (ทำได้เลย)
+
+- [ ] เพิ่ม EXP/Level และ stat points
+- [ ] ทำ level-up popup (3 choices)
+- [ ] สร้าง active skill 1 ตัว + passive skill 2 ตัว
+- [ ] ทำ loot drop 2 ชนิด (Gold + HP Orb)
+- [ ] ผูก HUD money/xp ด้วย asset ที่มี
