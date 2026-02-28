@@ -35,13 +35,39 @@ class PlayerEntity(Entity):
         self.max_hp = 100
         self.hp = self.max_hp
 
+        # Progression / RPG stats (Phase A)
+        self.level = 1
+        self.exp = 0
+        self.next_exp = 100
+        self.stat_points = 0
+
+        self.str = 1
+        self.dex = 1
+        self.agi = 1
+        self.int = 1
+        self.vit = 1
+        self.luck = 1
+
+        self.base_walk_speed = 240
+        self.base_run_speed = 420
+        self.base_bullet_damage = 10
+        self.base_fire_rate = 0.15
+        self.base_crit_chance = 0.05
+        self.base_max_hp = 100
+
+        self.bullet_damage = self.base_bullet_damage
+        self.fire_rate = self.base_fire_rate
+        self.crit_chance = self.base_crit_chance
+        self.skill_cooldown_multiplier = 1.0
+        self.loot_drop_multiplier = 1.0
+
         self.current_anim = "idle"
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.1
         self.facing = 1
-        self.speed = 240
-        self.run_speed = 420
+        self.speed = self.base_walk_speed
+        self.run_speed = self.base_run_speed
         self.is_shooting = False
         self.is_dead = False
         self.is_hurt = False
@@ -49,6 +75,64 @@ class PlayerEntity(Entity):
         self.hurt_duration = 0.3  # seconds of hurt flash/anim
         self.death_anim_done = False
         self.hit_flash_timer = 0.0  # red flash on hit
+
+        self.recalculate_derived_stats()
+
+    def _exp_required_for_level(self, level: int) -> int:
+        return int(100 * (1.25 ** (max(1, level) - 1)))
+
+    def recalculate_derived_stats(self):
+        previous_max_hp = self.max_hp
+        hp_ratio = self.hp / previous_max_hp if previous_max_hp > 0 else 1.0
+
+        self.max_hp = self.base_max_hp + (self.vit - 1) * 18
+        self.bullet_damage = self.base_bullet_damage + (self.str - 1) * 2 + (self.dex - 1) * 0.5
+        self.fire_rate = max(0.06, self.base_fire_rate - (self.dex - 1) * 0.003 - (self.agi - 1) * 0.002)
+        self.crit_chance = min(0.50, self.base_crit_chance + (self.luck - 1) * 0.01)
+        self.speed = self.base_walk_speed + (self.agi - 1) * 8
+        self.run_speed = self.base_run_speed + (self.agi - 1) * 10
+        self.skill_cooldown_multiplier = max(0.5, 1.0 - (self.int - 1) * 0.02)
+        self.loot_drop_multiplier = 1.0 + (self.luck - 1) * 0.03
+
+        self.hp = max(1.0, min(self.max_hp, self.max_hp * hp_ratio))
+
+    def add_experience(self, amount: int) -> bool:
+        if amount <= 0:
+            return False
+
+        self.exp += amount
+        leveled_up = False
+
+        while self.exp >= self.next_exp:
+            self.exp -= self.next_exp
+            self.level += 1
+            self.stat_points += 3
+            leveled_up = True
+            self.next_exp = self._exp_required_for_level(self.level)
+            self.hp = min(self.max_hp, self.hp + self.max_hp * 0.2)
+
+        return leveled_up
+
+    def allocate_stat(self, stat_name: str) -> bool:
+        if self.stat_points <= 0:
+            return False
+
+        attr_map = {
+            "str": "str",
+            "dex": "dex",
+            "agi": "agi",
+            "int": "int",
+            "vit": "vit",
+            "luck": "luck",
+        }
+        attr_name = attr_map.get(stat_name)
+        if attr_name is None:
+            return False
+
+        setattr(self, attr_name, getattr(self, attr_name) + 1)
+        self.stat_points -= 1
+        self.recalculate_derived_stats()
+        return True
 
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []

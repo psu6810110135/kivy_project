@@ -58,8 +58,8 @@
 
 #### Progression / RPG
 
-- [ ] ระบบ EXP และ Level-up
-- [ ] ระบบค่าสเตตัส RPG (STR/DEX/AGI/INT/VIT/LUCK) แบบมีผลจริง
+- [x] ระบบ EXP และ Level-up
+- [x] ระบบค่าสเตตัส RPG (STR/DEX/AGI/INT/VIT/LUCK) แบบมีผลจริง
 - [ ] ระบบเลือกอัปเกรดตอนเลเวลอัป (pause + choose)
 
 #### Skill-based System
@@ -244,7 +244,7 @@
 
 ## 7) Immediate Next Sprint (ทำได้เลย)
 
-- [ ] เพิ่ม EXP/Level และ stat points
+- [x] เพิ่ม EXP/Level และ stat points
 - [ ] ทำ level-up popup (3 choices)
 - [ ] สร้าง active skill 1 ตัว + passive skill 2 ตัว
 - [ ] ทำ loot drop 2 ชนิด (Gold + HP Orb)

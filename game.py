@@ -48,10 +48,11 @@ class GameWidget(Widget):
         self.pressed_keys: Set[str] = set()
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
         self.pos_label = Label(text="", halign="right", valign="top")
+        self.progression_label = Label(text="", halign="left", valign="top")
         self.debug_mode = False
         self.god_mode = False  # Player invincibility (debug key 8)
-        self.bullet_damage = 10  # Damage per bullet
-        self.fire_rate = 0.15  # seconds between shots while holding
+        self.bullet_damage = self.player.bullet_damage
+        self.fire_rate = self.player.fire_rate
         self.fire_timer = 0.0
         self.firing = False
 
@@ -65,6 +66,9 @@ class GameWidget(Widget):
 
         self.add_widget(self.debug_label)
         self.add_widget(self.pos_label)
+        self.add_widget(self.progression_label)
+
+        self._sync_combat_from_player()
 
         self._spawn_player_at_screen_center()
 
@@ -144,6 +148,19 @@ class GameWidget(Widget):
             self.time_speed_multiplier = speeds[(current_idx + 1) % len(speeds)]
             return True
 
+        if not self.debug_mode and key in ('1', '2', '3', '4', '5', '6'):
+            stat_key_map = {
+                '1': 'str',
+                '2': 'dex',
+                '3': 'agi',
+                '4': 'int',
+                '5': 'vit',
+                '6': 'luck',
+            }
+            if self.player.allocate_stat(stat_key_map[key]):
+                self._sync_combat_from_player()
+            return True
+
         self.pressed_keys.add(key)
         return True
 
@@ -179,6 +196,8 @@ class GameWidget(Widget):
             # At 0:00 -> 2.0s interval, at 15:00 -> 0.5s interval
             progress = self.game_time / self.GAME_DURATION  # 0.0 to 1.0
             self.spawn_interval = self.base_spawn_interval - (progress * 1.5)  # 2.0 -> 0.5
+
+        self._update_progression_hud()
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
 
@@ -268,7 +287,10 @@ class GameWidget(Widget):
                 if enemy.is_dying:
                     continue
                 if self._rects_intersect(bullet_box, enemy.get_hitbox()):
-                    enemy.take_damage(self.bullet_damage)
+                    bullet_damage = getattr(b, "damage", self.bullet_damage)
+                    enemy_died = enemy.take_damage(bullet_damage)
+                    if enemy_died:
+                        self.player.add_experience(self._get_enemy_exp_reward(enemy))
                     hit = True
                     break
             if not hit:
@@ -277,7 +299,10 @@ class GameWidget(Widget):
                     if se.is_dying:
                         continue
                     if self._rects_intersect(bullet_box, se.get_hitbox()):
-                        se.take_damage(self.bullet_damage)
+                        bullet_damage = getattr(b, "damage", self.bullet_damage)
+                        enemy_died = se.take_damage(bullet_damage)
+                        if enemy_died:
+                            self.player.add_experience(self._get_enemy_exp_reward(se))
                         hit = True
                         break
             if hit:
@@ -674,7 +699,46 @@ class GameWidget(Widget):
         bullet_w, bullet_h = BulletEntity.SIZE
         bullet_center = muzzle_pos + shot_direction * (bullet_w / 2)
         spawn_pos = bullet_center - Vector(bullet_w / 2, bullet_h / 2)
-        self.bullets.append(BulletEntity(spawn_pos, shot_direction))
+        bullet = BulletEntity(spawn_pos, shot_direction)
+        is_crit = random.random() < self.player.crit_chance
+        bullet.damage = self.player.bullet_damage * (1.75 if is_crit else 1.0)
+        bullet.is_crit = is_crit
+        self.bullets.append(bullet)
+
+    def _get_enemy_exp_reward(self, enemy) -> int:
+        if isinstance(enemy, SpecialEnemyEntity):
+            return 80
+
+        asset_path = getattr(enemy, "asset_path", "")
+        if "Zombie_1" in asset_path:
+            return 18
+        if "Zombie_2" in asset_path:
+            return 28
+        if "Zombie_3" in asset_path:
+            return 16
+        if "Zombie_4" in asset_path:
+            return 24
+        return 20
+
+    def _sync_combat_from_player(self):
+        self.bullet_damage = self.player.bullet_damage
+        self.fire_rate = self.player.fire_rate
+
+    def _update_progression_hud(self):
+        stats = self.player
+        stat_hint = ""
+        if stats.stat_points > 0:
+            stat_hint = "\nSpend: 1 STR 2 DEX 3 AGI 4 INT 5 VIT 6 LUCK"
+
+        self.progression_label.text = (
+            f"LV {stats.level}  EXP {int(stats.exp)}/{int(stats.next_exp)}  SP {stats.stat_points}"
+            f"\nSTR {stats.str}  DEX {stats.dex}  AGI {stats.agi}  INT {stats.int}  VIT {stats.vit}  LUCK {stats.luck}"
+            f"\nDMG {stats.bullet_damage:.1f}  FireRate {stats.fire_rate:.3f}s  Crit {stats.crit_chance * 100:.0f}%"
+            f"{stat_hint}"
+        )
+        self.progression_label.text_size = (max(360, self.width * 0.48), None)
+        self.progression_label.pos = (15, self.height - 170)
+        self.progression_label.color = (1, 1, 1, 1)
 
     def _spawn_enemy(self):
         """Spawn enemy at random edge (left or right) within the player's walkable band."""
