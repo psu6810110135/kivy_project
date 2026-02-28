@@ -4,7 +4,7 @@ import math
 from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
-from kivy.graphics import Color, Rectangle, Line, PushMatrix, PopMatrix, Rotate
+from kivy.graphics import Color, Rectangle, RoundedRectangle, Line, PushMatrix, PopMatrix, Rotate, Ellipse
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
 from kivy.vector import Vector
@@ -119,11 +119,15 @@ class GameWidget(Widget):
         self.timer_label = Label(text="15:00", font_size=48, halign="center", valign="middle")
         self.timer_label.color = (1, 1, 1, 1)  # White
         self.timer_label.bold = True
+        self.timer_label.opacity = 0  # Timer drawn on canvas
         self.add_widget(self.timer_label)
 
         self.add_widget(self.debug_label)
         self.add_widget(self.pos_label)
+        self.progression_label.opacity = 0  # HUD drawn on canvas
         self.add_widget(self.progression_label)
+
+        self.kill_count = 0
 
         self._sync_combat_from_player()
 
@@ -352,6 +356,7 @@ class GameWidget(Widget):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
                     if enemy_died:
+                        self.kill_count += 1
                         self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
                     hit = True
                     break
@@ -364,6 +369,7 @@ class GameWidget(Widget):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
                         if enemy_died:
+                            self.kill_count += 1
                             self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
                         hit = True
                         break
@@ -594,8 +600,8 @@ class GameWidget(Widget):
             for proj in self.enemy_projectiles:
                 proj.draw(self.canvas)
 
-            # Draw timer at top center
-            self._draw_timer()
+            # Draw game UI (HP bar, EXP bar, timer, kills, etc.)
+            self._draw_game_ui()
 
             if self.levelup_active:
                 self._draw_levelup_overlay()
@@ -751,6 +757,248 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=texture, pos=(x, y), size=(label_w, label_h))
 
+    # ─── Enhanced UI Drawing Methods ────────────────────────────────────
+
+    def _draw_outlined_text(self, text, x, y, font_size=24, color=(1, 1, 1, 1),
+                            anchor_x='left', anchor_y='bottom', bold=False):
+        """Draw text with dark outline at the specified position. Returns (w, h)."""
+        lbl = CoreLabel(text=text, font_size=font_size, color=color, bold=bold)
+        lbl.refresh()
+        tex = lbl.texture
+        if not tex:
+            return (0, 0)
+        w, h = tex.size
+        draw_x, draw_y = x, y
+        if anchor_x == 'center':
+            draw_x = x - w / 2
+        elif anchor_x == 'right':
+            draw_x = x - w
+        if anchor_y == 'center':
+            draw_y = y - h / 2
+        elif anchor_y == 'top':
+            draw_y = y - h
+        shadow = CoreLabel(text=text, font_size=font_size, color=(0, 0, 0, 1), bold=bold)
+        shadow.refresh()
+        stex = shadow.texture
+        if stex:
+            Color(0, 0, 0, 0.9)
+            for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                Rectangle(texture=stex, pos=(draw_x + dx, draw_y + dy), size=(w, h))
+        Color(*color)
+        Rectangle(texture=tex, pos=(draw_x, draw_y), size=(w, h))
+        return (w, h)
+
+    def _draw_game_ui(self):
+        """Main UI orchestrator — draws all HUD elements on canvas."""
+        s = self.height / 1080.0 if self.height > 0 else 1.0
+        # Low HP warning vignette
+        if not self.player.is_dead and self.player.max_hp > 0:
+            hp_ratio = self.player.hp / self.player.max_hp
+            if hp_ratio < 0.3:
+                pulse = 0.08 + 0.06 * math.sin(self.game_time * 5)
+                Color(0.7, 0, 0, pulse)
+                Rectangle(pos=(0, 0), size=self.size)
+        self._draw_hud_panel(s)
+        self._draw_timer_panel(s)
+        self._draw_combat_info_panel(s)
+        # Death overlay
+        if self.player.is_dead:
+            Color(0.03, 0, 0, 0.55)
+            Rectangle(pos=(0, 0), size=self.size)
+            self._draw_outlined_text(
+                "DEFEATED", self.width / 2, self.height / 2,
+                font_size=int(64 * s), color=(0.85, 0.12, 0.1, 1),
+                anchor_x='center', anchor_y='center', bold=True
+            )
+
+    def _draw_hud_panel(self, s):
+        """Draw the player status HUD panel in the top-left corner."""
+        pad = 16 * s
+        panel_x = 16 * s
+        panel_w = 400 * s
+        panel_h = 150 * s
+        panel_y = self.height - panel_h - 16 * s
+
+        # Panel background
+        Color(0.05, 0.05, 0.12, 0.75)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[12 * s])
+        Color(0.45, 0.42, 0.55, 0.5)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 12 * s), width=1.5)
+
+        # ── Level badge ──
+        badge_x = panel_x + pad
+        badge_y = panel_y + panel_h - 36 * s
+        badge_r = 16 * s
+        Color(0.85, 0.7, 0.15, 0.9)
+        Ellipse(pos=(badge_x, badge_y), size=(badge_r * 2, badge_r * 2))
+        self._draw_outlined_text(
+            f"{self.player.level}", badge_x + badge_r, badge_y + badge_r,
+            font_size=int(16 * s), color=(0.1, 0.05, 0, 1),
+            anchor_x='center', anchor_y='center', bold=True
+        )
+        self._draw_outlined_text(
+            f"LV {self.player.level}", badge_x + badge_r * 2 + 8 * s, badge_y + 6 * s,
+            font_size=int(20 * s), color=(1, 0.92, 0.5, 1), bold=True
+        )
+        # Stat points indicator
+        if self.player.stat_points > 0:
+            self._draw_outlined_text(
+                f"+{self.player.stat_points} SP", panel_x + panel_w - pad, badge_y + 6 * s,
+                font_size=int(16 * s), color=(0.3, 1, 0.5, 1),
+                anchor_x='right', bold=True
+            )
+
+        # ── HP Bar ──
+        bar_x = panel_x + pad
+        bar_w = panel_w - pad * 2
+        bar_h = 22 * s
+        hp_bar_y = panel_y + panel_h - 68 * s
+
+        # HP heart icon (red circle)
+        heart_size = 18 * s
+        Color(0.9, 0.15, 0.15, 1)
+        Ellipse(pos=(bar_x, hp_bar_y + (bar_h - heart_size) / 2), size=(heart_size, heart_size))
+        hp_bar_x = bar_x + heart_size + 6 * s
+        hp_bar_w = bar_w - heart_size - 6 * s
+
+        # Bar background
+        Color(0.2, 0.08, 0.08, 0.9)
+        RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(hp_bar_w, bar_h), radius=[4 * s])
+        # Bar fill
+        hp_ratio = max(0, min(1, self.player.hp / self.player.max_hp)) if self.player.max_hp > 0 else 0
+        fill_w = hp_bar_w * hp_ratio
+        if fill_w > 1:
+            if hp_ratio > 0.5:
+                Color(0.15, 0.78, 0.25, 0.95)
+            elif hp_ratio > 0.25:
+                Color(0.95, 0.75, 0.1, 0.95)
+            else:
+                Color(0.88, 0.12, 0.12, 0.95)
+            RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(fill_w, bar_h), radius=[4 * s])
+        # HP text overlay
+        self._draw_outlined_text(
+            f"{int(self.player.hp)}/{int(self.player.max_hp)}",
+            hp_bar_x + hp_bar_w / 2, hp_bar_y + bar_h / 2,
+            font_size=int(14 * s), color=(1, 1, 1, 1),
+            anchor_x='center', anchor_y='center', bold=True
+        )
+
+        # ── EXP Bar ──
+        exp_bar_y = hp_bar_y - 18 * s
+        exp_bar_h = 12 * s
+        Color(0.08, 0.08, 0.18, 0.9)
+        RoundedRectangle(pos=(bar_x, exp_bar_y), size=(bar_w, exp_bar_h), radius=[3 * s])
+        exp_ratio = (self.player.exp / self.player.next_exp) if self.player.next_exp > 0 else 0
+        exp_fill_w = bar_w * max(0, min(1, exp_ratio))
+        if exp_fill_w > 1:
+            Color(0.95, 0.8, 0.15, 0.9)
+            RoundedRectangle(pos=(bar_x, exp_bar_y), size=(exp_fill_w, exp_bar_h), radius=[3 * s])
+        self._draw_outlined_text(
+            f"EXP {int(self.player.exp)}/{int(self.player.next_exp)}",
+            bar_x + bar_w / 2, exp_bar_y + exp_bar_h / 2,
+            font_size=int(11 * s), color=(1, 0.95, 0.7, 1),
+            anchor_x='center', anchor_y='center'
+        )
+
+        # ── Stats line ──
+        stats_y = exp_bar_y - 20 * s
+        stats_text = (
+            f"STR {self.player.str}  DEX {self.player.dex}  AGI {self.player.agi}  "
+            f"INT {self.player.int}  VIT {self.player.vit}  LCK {self.player.luck}"
+        )
+        self._draw_outlined_text(
+            stats_text, bar_x, stats_y,
+            font_size=int(12 * s), color=(0.72, 0.72, 0.82, 0.85)
+        )
+
+        # ── Combat info line ──
+        combat_y = stats_y - 18 * s
+        combat_text = (
+            f"DMG {self.player.bullet_damage:.1f}   "
+            f"Rate {self.player.fire_rate:.2f}s   "
+            f"Crit {self.player.crit_chance * 100:.0f}%"
+        )
+        self._draw_outlined_text(
+            combat_text, bar_x, combat_y,
+            font_size=int(11 * s), color=(0.6, 0.65, 0.72, 0.75)
+        )
+
+    def _draw_timer_panel(self, s):
+        """Draw the styled timer panel at top center."""
+        remaining = max(0, self.GAME_DURATION - self.game_time)
+        minutes = int(remaining // 60)
+        seconds = int(remaining % 60)
+        timer_text = f"{minutes:02d}:{seconds:02d}"
+
+        panel_w = 180 * s
+        panel_h = 72 * s
+        panel_x = (self.width - panel_w) / 2
+        panel_y = self.height - panel_h - 12 * s
+
+        # Panel background
+        Color(0.05, 0.05, 0.12, 0.78)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[10 * s])
+        # Border — color shifts with time
+        if remaining > 300:
+            Color(0.4, 0.4, 0.55, 0.6)
+        elif remaining > 60:
+            Color(0.9, 0.75, 0.15, 0.7)
+        else:
+            Color(0.9, 0.2, 0.15, 0.8)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.5)
+
+        # Timer text
+        timer_color = (1, 1, 1, 1) if remaining > 60 else (1, 0.4, 0.3, 1)
+        self._draw_outlined_text(
+            timer_text, self.width / 2, panel_y + panel_h / 2 + 8 * s,
+            font_size=int(34 * s), color=timer_color,
+            anchor_x='center', anchor_y='center', bold=True
+        )
+
+        # Difficulty indicator
+        progress = min(1.0, self.game_time / self.GAME_DURATION) if self.GAME_DURATION > 0 else 0
+        diff_level = int(progress * 10) + 1
+        diff_color = (
+            min(1.0, 0.4 + progress * 0.6),
+            max(0.3, 0.9 - progress * 0.6),
+            0.2, 0.9
+        )
+        self._draw_outlined_text(
+            f"Danger Lv.{diff_level}", self.width / 2, panel_y + 8 * s,
+            font_size=int(12 * s), color=diff_color,
+            anchor_x='center', anchor_y='bottom'
+        )
+
+    def _draw_combat_info_panel(self, s):
+        """Draw kill counter and enemy count in the top-right corner."""
+        panel_w = 190 * s
+        panel_h = 85 * s
+        panel_x = self.width - panel_w - 16 * s
+        panel_y = self.height - panel_h - 16 * s
+        pad = 14 * s
+
+        Color(0.05, 0.05, 0.12, 0.75)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[10 * s])
+        Color(0.5, 0.35, 0.35, 0.45)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.2)
+
+        # Kill count
+        self._draw_outlined_text(
+            f"Kills: {self.kill_count}", panel_x + pad, panel_y + panel_h - 28 * s,
+            font_size=int(18 * s), color=(1, 0.85, 0.3, 1), bold=True
+        )
+        # Enemy count
+        total_enemies = len(self.enemies) + len(self.special_enemies)
+        self._draw_outlined_text(
+            f"Enemies: {total_enemies}", panel_x + pad, panel_y + panel_h - 52 * s,
+            font_size=int(14 * s), color=(0.9, 0.5, 0.4, 0.9)
+        )
+        # Orb count
+        self._draw_outlined_text(
+            f"Orbs: {len(self.exp_orbs)}", panel_x + pad, panel_y + panel_h - 72 * s,
+            font_size=int(12 * s), color=(0.4, 0.95, 0.5, 0.8)
+        )
+
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
         god_str = "  [GODMODE ON]" if self.god_mode else ""
@@ -885,26 +1133,131 @@ class GameWidget(Widget):
             self.levelup_choices = []
 
     def _draw_levelup_overlay(self):
-        overlay_margin_x = self.width * 0.18
-        panel_width = self.width - (overlay_margin_x * 2)
-        panel_height = self.height * 0.42
-        panel_x = overlay_margin_x
-        panel_y = (self.height - panel_height) / 2
+        """Draw an enhanced level-up selection overlay with card UI."""
+        s = self.height / 1080.0 if self.height > 0 else 1.0
 
-        Color(0, 0, 0, 0.55)
+        # Full-screen dark overlay
+        Color(0, 0, 0, 0.6)
         Rectangle(pos=(0, 0), size=self.size)
 
-        Color(0.12, 0.12, 0.16, 0.95)
-        Rectangle(pos=(panel_x, panel_y), size=(panel_width, panel_height))
+        # Central panel
+        panel_w = self.width * 0.55
+        panel_h = self.height * 0.52
+        panel_x = (self.width - panel_w) / 2
+        panel_y = (self.height - panel_h) / 2
 
-        self._draw_label_at("LEVEL UP - Choose 1 Upgrade", self.width / 2, panel_y + panel_height - 70, (1, 1, 0.6, 1))
-        self._draw_label_at("Press 1 / 2 / 3 to select", self.width / 2, panel_y + panel_height - 118, (0.9, 0.9, 0.9, 1))
+        # Panel background layers
+        Color(0.08, 0.07, 0.14, 0.95)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[20 * s])
+        inner_pad = 4 * s
+        Color(0.12, 0.11, 0.2, 0.9)
+        RoundedRectangle(
+            pos=(panel_x + inner_pad, panel_y + inner_pad),
+            size=(panel_w - inner_pad * 2, panel_h - inner_pad * 2),
+            radius=[16 * s]
+        )
+        # Golden border
+        Color(0.85, 0.7, 0.2, 0.8)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 20 * s), width=2.5)
 
-        option_spacing = panel_width / 3
+        # Title
+        title_y = panel_y + panel_h - 55 * s
+        self._draw_outlined_text(
+            "LEVEL UP!", self.width / 2, title_y,
+            font_size=int(42 * s), color=(1, 0.9, 0.3, 1),
+            anchor_x='center', anchor_y='center', bold=True
+        )
+
+        # Subtitle
+        subtitle_y = title_y - 35 * s
+        remaining_text = f"({self.pending_levelups} more)" if self.pending_levelups > 0 else ""
+        self._draw_outlined_text(
+            f"Choose your upgrade  {remaining_text}", self.width / 2, subtitle_y,
+            font_size=int(20 * s), color=(0.85, 0.85, 0.9, 0.9),
+            anchor_x='center', anchor_y='center'
+        )
+
+        # Separator line
+        sep_y = subtitle_y - 20 * s
+        Color(0.5, 0.45, 0.6, 0.4)
+        Line(points=[panel_x + 40 * s, sep_y, panel_x + panel_w - 40 * s, sep_y], width=1)
+
+        # Option cards
+        stat_descriptions = {
+            "str": ("STR", "+1", "Bullet Damage +", (0.95, 0.35, 0.3, 1)),
+            "dex": ("DEX", "+1", "Fire Rate +", (0.3, 0.85, 0.95, 1)),
+            "agi": ("AGI", "+1", "Move Speed +", (0.3, 0.95, 0.45, 1)),
+            "int": ("INT", "+1", "Skill Cooldown -", (0.6, 0.4, 0.95, 1)),
+            "vit": ("VIT", "+1", "Max HP +", (0.95, 0.55, 0.7, 1)),
+            "luck": ("LUCK", "+1", "Crit & Drop +", (0.95, 0.85, 0.2, 1)),
+        }
+
+        card_count = len(self.levelup_choices)
+        card_spacing = 24 * s
+        total_card_width = panel_w - 80 * s
+        card_w = (total_card_width - card_spacing * (card_count - 1)) / max(1, card_count)
+        card_h = panel_h * 0.48
+        card_start_x = panel_x + 40 * s
+        card_y = panel_y + 30 * s
+
         for idx, stat_key in enumerate(self.levelup_choices):
-            cx = panel_x + option_spacing * (idx + 0.5)
-            text = f"[{idx + 1}] {self.levelup_choice_labels.get(stat_key, stat_key.upper())}"
-            self._draw_label_at(text, cx, panel_y + panel_height * 0.42, (0.8, 1, 0.9, 1))
+            cx = card_start_x + idx * (card_w + card_spacing)
+            stat_name, bonus, desc, accent = stat_descriptions.get(
+                stat_key, (stat_key.upper(), "+1", "", (1, 1, 1, 1))
+            )
+
+            # Card background
+            Color(0.1, 0.1, 0.18, 0.92)
+            RoundedRectangle(pos=(cx, card_y), size=(card_w, card_h), radius=[12 * s])
+            # Card border
+            Color(*accent[:3], 0.6)
+            Line(rounded_rectangle=(cx, card_y, card_w, card_h, 12 * s), width=1.8)
+
+            # Key number hint
+            key_y = card_y + card_h - 35 * s
+            Color(*accent[:3], 0.15)
+            Ellipse(pos=(cx + card_w / 2 - 18 * s, key_y - 4 * s), size=(36 * s, 36 * s))
+            self._draw_outlined_text(
+                f"{idx + 1}", cx + card_w / 2, key_y + 14 * s,
+                font_size=int(22 * s), color=accent,
+                anchor_x='center', anchor_y='center', bold=True
+            )
+
+            # Stat name
+            self._draw_outlined_text(
+                stat_name, cx + card_w / 2, key_y - 40 * s,
+                font_size=int(28 * s), color=accent,
+                anchor_x='center', anchor_y='center', bold=True
+            )
+
+            # Bonus text
+            self._draw_outlined_text(
+                bonus, cx + card_w / 2, key_y - 72 * s,
+                font_size=int(20 * s), color=(0.9, 0.9, 0.9, 0.9),
+                anchor_x='center', anchor_y='center'
+            )
+
+            # Description
+            self._draw_outlined_text(
+                desc, cx + card_w / 2, key_y - 102 * s,
+                font_size=int(14 * s), color=(0.7, 0.7, 0.75, 0.8),
+                anchor_x='center', anchor_y='center'
+            )
+
+            # Current value
+            current_val = getattr(self.player, stat_key, 0)
+            self._draw_outlined_text(
+                f"Current: {current_val}", cx + card_w / 2, card_y + 20 * s,
+                font_size=int(13 * s), color=(0.6, 0.6, 0.65, 0.7),
+                anchor_x='center', anchor_y='bottom'
+            )
+
+        # Bottom hint
+        self._draw_outlined_text(
+            "Press  1  /  2  /  3  to select", self.width / 2, panel_y + 8 * s,
+            font_size=int(16 * s), color=(0.7, 0.7, 0.75, 0.7),
+            anchor_x='center', anchor_y='bottom'
+        )
 
     def _get_enemy_exp_reward(self, enemy) -> int:
         if isinstance(enemy, SpecialEnemyEntity):
@@ -926,20 +1279,8 @@ class GameWidget(Widget):
         self.fire_rate = self.player.fire_rate
 
     def _update_progression_hud(self):
-        stats = self.player
-        stat_hint = ""
-        if stats.stat_points > 0:
-            stat_hint = "\nSpend: 1 STR 2 DEX 3 AGI 4 INT 5 VIT 6 LUCK"
-
-        self.progression_label.text = (
-            f"LV {stats.level}  EXP {int(stats.exp)}/{int(stats.next_exp)}  SP {stats.stat_points}"
-            f"\nSTR {stats.str}  DEX {stats.dex}  AGI {stats.agi}  INT {stats.int}  VIT {stats.vit}  LUCK {stats.luck}"
-            f"\nDMG {stats.bullet_damage:.1f}  FireRate {stats.fire_rate:.3f}s  Crit {stats.crit_chance * 100:.0f}%"
-            f"{stat_hint}"
-        )
-        self.progression_label.text_size = (max(360, self.width * 0.48), None)
-        self.progression_label.pos = (15, self.height - 170)
-        self.progression_label.color = (1, 1, 1, 1)
+        """Progression HUD is now drawn on canvas in _draw_hud_panel. Keep label cleared."""
+        self.progression_label.text = ""
 
     def _spawn_enemy(self):
         """Spawn enemy at random edge (left or right) within the player's walkable band."""
