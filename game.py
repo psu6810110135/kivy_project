@@ -100,7 +100,7 @@ class GameWidget(Widget):
         self.fire_timer = 0.0
         self.firing = False
 
-        # Level-up selection overlay (Phase A)
+        # Level-up selection overlay
         self.levelup_active = False
         self.pending_levelups = 0
         self.levelup_choices = []
@@ -173,7 +173,8 @@ class GameWidget(Widget):
         key = keycode[1]
 
         if key == 'r':
-            self.player.start_reload()
+            if hasattr(self.player, 'start_reload'):
+                self.player.start_reload()
             return True
 
         if self.levelup_active:
@@ -227,8 +228,34 @@ class GameWidget(Widget):
 
     def on_touch_down(self, touch):
         if touch.button == 'left':
-            if self.player.is_dead or self.levelup_active:
+            # Process clicking on upgrade cards if level up screen is active
+            if self.levelup_active:
+                s = self.height / 1080.0 if self.height > 0 else 1.0
+                panel_w = self.width * 0.55
+                panel_h = self.height * 0.52
+                panel_x = (self.width - panel_w) / 2
+                panel_y = (self.height - panel_h) / 2
+                
+                card_count = len(self.levelup_choices)
+                card_spacing = 24 * s
+                total_card_width = panel_w - 80 * s
+                card_w = (total_card_width - card_spacing * (card_count - 1)) / max(1, card_count)
+                card_h = panel_h * 0.48
+                card_start_x = panel_x + 40 * s
+                card_y = panel_y + 30 * s
+                
+                # Check if click falls within any card's bounding box
+                for idx in range(card_count):
+                    cx = card_start_x + idx * (card_w + card_spacing)
+                    if cx <= touch.x <= cx + card_w and card_y <= touch.y <= card_y + card_h:
+                        self._apply_levelup_choice(idx)
+                        break
                 return True
+
+            if self.player.is_dead:
+                return True
+            
+            # Weapon firing / reloading logic
             if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
                 self.player.start_shooting()
             elif getattr(self.player, 'ammo', 0) <= 0:
@@ -1294,7 +1321,7 @@ class GameWidget(Widget):
 
         # Bottom hint
         self._draw_outlined_text(
-            "Press  1  /  2  /  3  to select", self.width / 2, panel_y + 8 * s,
+            "Click or Press  1  /  2  /  3  to select", self.width / 2, panel_y + 8 * s,
             font_size=int(16 * s), color=(0.7, 0.7, 0.75, 0.7),
             anchor_x='center', anchor_y='bottom'
         )
