@@ -35,6 +35,14 @@ class PlayerEntity(Entity):
         self.max_hp = 100
         self.hp = self.max_hp
 
+        # Ammo System
+        self.max_ammo = 30
+        self.ammo = self.max_ammo
+        self.is_reloading = False
+        self.base_reload_time = 1.5
+        self.reload_time = self.base_reload_time
+        self.reload_timer = 0.0
+
         # Progression / RPG stats (Phase A)
         self.level = 1
         self.exp = 0
@@ -93,6 +101,7 @@ class PlayerEntity(Entity):
         self.run_speed = self.base_run_speed + (self.agi - 1) * 10
         self.skill_cooldown_multiplier = max(0.5, 1.0 - (self.int - 1) * 0.02)
         self.loot_drop_multiplier = 1.0 + (self.luck - 1) * 0.03
+        self.reload_time = max(0.5, self.base_reload_time - (self.dex - 1) * 0.05)
 
         self.hp = max(1.0, min(self.max_hp, self.max_hp * hp_ratio))
 
@@ -134,6 +143,18 @@ class PlayerEntity(Entity):
         self.recalculate_derived_stats()
         return True
 
+    def start_reload(self):
+        if not self.is_reloading and self.ammo < self.max_ammo and not self.is_dead:
+            self.is_reloading = True
+            self.reload_timer = self.reload_time
+            self.stop_shooting()
+
+    def consume_ammo(self):
+        if self.ammo > 0:
+            self.ammo -= 1
+            if self.ammo <= 0:
+                self.start_reload()
+
     def _load_animation(self, name: str, prefix: str, count: int):
         frames: List = []
         bboxes: List[Tuple[float, float, float, float]] = []
@@ -173,6 +194,13 @@ class PlayerEntity(Entity):
 
     def update(self, dt: float, pressed_keys: set, bounds: Tuple[float, float]):
         self.update_statuses(dt)
+
+        # Reload timer countdown
+        if self.is_reloading:
+            self.reload_timer -= dt
+            if self.reload_timer <= 0:
+                self.is_reloading = False
+                self.ammo = self.max_ammo
 
         # Dead — play death anim once then freeze on last frame
         if self.is_dead:
@@ -273,7 +301,7 @@ class PlayerEntity(Entity):
         return False
 
     def start_shooting(self):
-        if self.is_dead:
+        if self.is_dead or self.is_reloading:
             return
         if "shot" in self.animations:
             self.is_shooting = True
