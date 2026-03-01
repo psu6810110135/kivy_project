@@ -229,10 +229,11 @@ class GameWidget(Widget):
         if touch.button == 'left':
             if self.player.is_dead or self.levelup_active:
                 return True
-            if not self.player.is_reloading and self.player.ammo > 0:
+            if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
                 self.player.start_shooting()
-            elif self.player.ammo <= 0:
-                self.player.start_reload()
+            elif getattr(self.player, 'ammo', 0) <= 0:
+                if hasattr(self.player, 'start_reload'):
+                    self.player.start_reload()
             self.firing = True
             self.fire_timer = 0.0  # require hold; first shot after fire_rate
             return True
@@ -341,16 +342,18 @@ class GameWidget(Widget):
 
         # Handle continuous fire when holding left click
         if self.firing and not self.player.is_dead:
-            if self.player.is_reloading:
+            if getattr(self.player, 'is_reloading', False):
                 self.player.stop_shooting()
-            elif self.player.ammo > 0:
+            elif getattr(self.player, 'ammo', 1) > 0:
                 self.fire_timer += dt
                 if self.fire_timer >= self.fire_rate:
                     self.fire_timer -= self.fire_rate
                     self._spawn_bullet()
-                    self.player.consume_ammo()
+                    if hasattr(self.player, 'consume_ammo'):
+                        self.player.consume_ammo()
             else:
-                self.player.start_reload()
+                if hasattr(self.player, 'start_reload'):
+                    self.player.start_reload()
         
         # Update and clean up bullets + bullet-enemy collision
         for b in self.bullets[:]:
@@ -814,6 +817,8 @@ class GameWidget(Widget):
         self._draw_hud_panel(s)
         self._draw_timer_panel(s)
         self._draw_combat_info_panel(s)
+        self._draw_ammo_panel(s)
+        
         # Death overlay
         if self.player.is_dead:
             Color(0.03, 0, 0, 0.55)
@@ -824,12 +829,32 @@ class GameWidget(Widget):
                 anchor_x='center', anchor_y='center', bold=True
             )
 
+    def _draw_ammo_panel(self, s):
+        """Draw the ammo counter prominently at the bottom right of the screen."""
+        ammo = getattr(self.player, 'ammo', 30)
+        max_ammo = getattr(self.player, 'max_ammo', 30)
+        is_reloading = getattr(self.player, 'is_reloading', False)
+        reload_timer = getattr(self.player, 'reload_timer', 0.0)
+
+        if is_reloading:
+            ammo_text = f"RELOADING... {reload_timer:.1f}s"
+            ammo_color = (0.9, 0.8, 0.2, 1)
+        else:
+            ammo_text = f"Ammo: {ammo}/{max_ammo}"
+            ammo_color = (0.95, 0.95, 0.95, 1) if ammo > 0 else (0.9, 0.2, 0.2, 1)
+
+        self._draw_outlined_text(
+            ammo_text, self.width - 40 * s, 40 * s,
+            font_size=int(32 * s), color=ammo_color,
+            anchor_x='right', anchor_y='bottom', bold=True
+        )
+
     def _draw_hud_panel(self, s):
         """Draw the player status HUD panel in the top-left corner."""
         pad = 16 * s
         panel_x = 16 * s
         panel_w = 400 * s
-        panel_h = 168 * s
+        panel_h = 150 * s
         panel_y = self.height - panel_h - 16 * s
 
         # Panel background
@@ -936,20 +961,6 @@ class GameWidget(Widget):
             font_size=int(11 * s), color=(0.6, 0.65, 0.72, 0.75)
         )
 
-        # ── Ammo Info line ──
-        ammo_y = combat_y - 18 * s
-        if self.player.is_reloading:
-            ammo_text = f"RELOADING... {self.player.reload_timer:.1f}s"
-            ammo_color = (0.9, 0.8, 0.2, 1)
-        else:
-            ammo_text = f"AMMO: {self.player.ammo}/{self.player.max_ammo} (INF)"
-            ammo_color = (0.4, 0.9, 0.9, 1) if self.player.ammo > 0 else (0.9, 0.2, 0.2, 1)
-
-        self._draw_outlined_text(
-            ammo_text, bar_x, ammo_y,
-            font_size=int(11 * s), color=ammo_color, bold=True
-        )
-
     def _draw_timer_panel(self, s):
         """Draw the styled timer panel at top center."""
         remaining = max(0, self.GAME_DURATION - self.game_time)
@@ -1038,13 +1049,15 @@ class GameWidget(Widget):
             f"EXP Orbs: {len(self.exp_orbs)}"
         )
         if self.debug_mode:
-            active_statuses = self.player.status.to_dict()
+            active_statuses = getattr(self.player, 'status', None)
             status_text = "none"
             if active_statuses:
-                status_parts = []
-                for name, payload in active_statuses.items():
-                    status_parts.append(f"{name}({payload['duration']:.1f}s x{payload['stacks']})")
-                status_text = ", ".join(status_parts)
+                status_dict = active_statuses.to_dict()
+                if status_dict:
+                    status_parts = []
+                    for name, payload in status_dict.items():
+                        status_parts.append(f"{name}({payload['duration']:.1f}s x{payload['stacks']})")
+                    status_text = ", ".join(status_parts)
 
             info += (
                 f"\nTime Speed: {self.time_speed_multiplier}x"
@@ -1052,7 +1065,7 @@ class GameWidget(Widget):
                 f"\nEnemy Speed x: {self.enemy_speed_multiplier:.2f}"
                 f"\nEXP Pull Radius: {self._get_exp_pull_radius():.0f}"
                 f"\nPlayer LV:{self.player.level} EXP:{int(self.player.exp)}/{int(self.player.next_exp)} SP:{self.player.stat_points}"
-                f"\nPlayer HP:{self.player.hp:.0f}/{self.player.max_hp:.0f} Ammo:{self.player.ammo}/{self.player.max_ammo} DMG:{self.player.bullet_damage:.1f}"
+                f"\nPlayer HP:{self.player.hp:.0f}/{self.player.max_hp:.0f} Ammo:{getattr(self.player, 'ammo', 0)}/{getattr(self.player, 'max_ammo', 30)} DMG:{self.player.bullet_damage:.1f}"
                 f"\nStats STR:{self.player.str} DEX:{self.player.dex} AGI:{self.player.agi} INT:{self.player.int} VIT:{self.player.vit} LUCK:{self.player.luck}"
                 f"\nStatus Effects: {status_text}"
             )
