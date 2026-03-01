@@ -97,8 +97,10 @@ class GameWidget(Widget):
         self.god_mode = False  # Player invincibility (debug key 8)
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
+        
         self.fire_timer = 0.0
         self.firing = False
+        self.burst_shots_remaining = 0  # Support for semi/burst fire modes
 
         # Level-up selection overlay
         self.levelup_active = False
@@ -175,6 +177,11 @@ class GameWidget(Widget):
         if key == 'r':
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
+            return True
+
+        if key == 'v':
+            if hasattr(self.player, 'toggle_firing_mode'):
+                self.player.toggle_firing_mode()
             return True
 
         if self.levelup_active:
@@ -257,19 +264,33 @@ class GameWidget(Widget):
             
             # Weapon firing / reloading logic
             if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
-                self.player.start_shooting()
+                mode = getattr(self.player, 'firing_mode', 'AUTO')
+                if mode == 'AUTO':
+                    self.firing = True
+                    self.player.start_shooting()
+                elif mode == 'SEMI':
+                    if not self.firing:
+                        self.burst_shots_remaining = 3
+                        self.firing = True
+                        self.player.start_shooting()
+                elif mode == 'SINGLE':
+                    if not self.firing:
+                        self.burst_shots_remaining = 1
+                        self.firing = True
+                        self.player.start_shooting()
             elif getattr(self.player, 'ammo', 0) <= 0:
                 if hasattr(self.player, 'start_reload'):
                     self.player.start_reload()
-            self.firing = True
-            self.fire_timer = 0.0  # require hold; first shot after fire_rate
             return True
         return super().on_touch_down(touch)
 
     def on_touch_up(self, touch):
         if touch.button == 'left':
-            self.player.stop_shooting()
-            self.firing = False
+            mode = getattr(self.player, 'firing_mode', 'AUTO')
+            if mode == 'AUTO':
+                self.player.stop_shooting()
+                self.firing = False
+            # For SEMI and SINGLE, we let the ongoing burst finish gracefully
             return True
         return super().on_touch_up(touch)
 
@@ -367,20 +388,33 @@ class GameWidget(Widget):
             walk_max_y = height - (3 * block_unit) - e.size[1]
             e.pos.y = max(walk_min_y, min(e.pos.y, max(walk_min_y, walk_max_y)))
 
-        # Handle continuous fire when holding left click
+        # Handle weapon fire cooldown tracking
+        self.fire_timer += dt
+
+        # Handle shooting execution
         if self.firing and not self.player.is_dead:
             if getattr(self.player, 'is_reloading', False):
                 self.player.stop_shooting()
+                self.firing = False
+                self.burst_shots_remaining = 0
             elif getattr(self.player, 'ammo', 1) > 0:
-                self.fire_timer += dt
                 if self.fire_timer >= self.fire_rate:
-                    self.fire_timer -= self.fire_rate
+                    self.fire_timer = 0.0  # Reset cooldown explicitly to avoid rapid stack bursts
                     self._spawn_bullet()
                     if hasattr(self.player, 'consume_ammo'):
                         self.player.consume_ammo()
+
+                    mode = getattr(self.player, 'firing_mode', 'AUTO')
+                    if mode in ('SEMI', 'SINGLE'):
+                        self.burst_shots_remaining -= 1
+                        if self.burst_shots_remaining <= 0:
+                            self.firing = False
+                            self.player.stop_shooting()
             else:
                 if hasattr(self.player, 'start_reload'):
                     self.player.start_reload()
+                self.firing = False
+                self.burst_shots_remaining = 0
         
         # Update and clean up bullets + bullet-enemy collision
         for b in self.bullets[:]:
@@ -873,6 +907,15 @@ class GameWidget(Widget):
         self._draw_outlined_text(
             ammo_text, self.width - 40 * s, 40 * s,
             font_size=int(32 * s), color=ammo_color,
+            anchor_x='right', anchor_y='bottom', bold=True
+        )
+
+        # Draw Firing Mode
+        mode = getattr(self.player, 'firing_mode', 'AUTO')
+        mode_text = f"Mode: {mode}"
+        self._draw_outlined_text(
+            mode_text, self.width - 40 * s, 40 * s + 36 * s,
+            font_size=int(22 * s), color=(0.8, 0.9, 1.0, 0.9),
             anchor_x='right', anchor_y='bottom', bold=True
         )
 

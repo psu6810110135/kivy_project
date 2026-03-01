@@ -22,7 +22,7 @@ class PlayerEntity(Entity):
         self._load_animation("shot", "Shot_", 5)
         self._load_animation("hurt", "Hurt", 3)
         self._load_animation("dead", "Dead", 4)
-        self._load_animation("recharge", "Recharge", 13)  # Load reload animation
+        self._load_animation("recharge", "Recharge", 13)
 
         base_texture = self.animations["idle"][0]
         target_height = Window.height / 3
@@ -36,13 +36,16 @@ class PlayerEntity(Entity):
         self.max_hp = 100
         self.hp = self.max_hp
 
-        # Ammo System
+        # Ammo & Firing System
         self.max_ammo = 30
         self.ammo = self.max_ammo
         self.is_reloading = False
         self.base_reload_time = 1.5
         self.reload_time = self.base_reload_time
         self.reload_timer = 0.0
+        
+        self.firing_modes = ['AUTO', 'SEMI', 'SINGLE']
+        self.current_firing_mode_idx = 0
 
         # Progression / RPG stats
         self.level = 1
@@ -81,11 +84,19 @@ class PlayerEntity(Entity):
         self.is_dead = False
         self.is_hurt = False
         self.hurt_timer = 0.0
-        self.hurt_duration = 0.3  # seconds of hurt flash/anim
+        self.hurt_duration = 0.3
         self.death_anim_done = False
-        self.hit_flash_timer = 0.0  # red flash on hit
+        self.hit_flash_timer = 0.0
 
         self.recalculate_derived_stats()
+
+    @property
+    def firing_mode(self) -> str:
+        return self.firing_modes[self.current_firing_mode_idx]
+
+    def toggle_firing_mode(self):
+        """Cycles the firing mode between Auto, Semi, and Single."""
+        self.current_firing_mode_idx = (self.current_firing_mode_idx + 1) % len(self.firing_modes)
 
     def _exp_required_for_level(self, level: int) -> int:
         return int(100 * (1.25 ** (max(1, level) - 1)))
@@ -149,7 +160,6 @@ class PlayerEntity(Entity):
             self.is_reloading = True
             self.reload_timer = self.reload_time
             self.stop_shooting()
-            # If the reload animation exists, reset timer to play it smoothly
             if "recharge" in self.animations:
                 self.current_anim = "recharge"
                 self.current_frame = 0
@@ -171,7 +181,6 @@ class PlayerEntity(Entity):
                 frames.append(texture)
                 bboxes.append(self._compute_bbox(texture))
             except Exception as exc:
-                # Silently catch so we can support character skins with fewer frames (like Soldier_2)
                 pass
         if frames:
             self.animations[name] = frames
@@ -202,14 +211,12 @@ class PlayerEntity(Entity):
     def update(self, dt: float, pressed_keys: set, bounds: Tuple[float, float]):
         self.update_statuses(dt)
 
-        # Reload timer countdown
         if self.is_reloading:
             self.reload_timer -= dt
             if self.reload_timer <= 0:
                 self.is_reloading = False
                 self.ammo = self.max_ammo
 
-        # Dead — play death anim once then freeze on last frame
         if self.is_dead:
             if self.current_anim != "dead":
                 self.current_anim = "dead"
@@ -226,11 +233,9 @@ class PlayerEntity(Entity):
                         self.death_anim_done = True
             return frames[self.current_frame] if frames else None
 
-        # Hit flash countdown
         if self.hit_flash_timer > 0:
             self.hit_flash_timer -= dt
 
-        # Hurt timer countdown
         if self.is_hurt:
             self.hurt_timer -= dt
             if self.hurt_timer <= 0:
@@ -248,7 +253,6 @@ class PlayerEntity(Entity):
 
         prev_anim = self.current_anim
 
-        # Prioritize animations: Hurt -> Reloading -> Shooting -> Moving -> Idle
         if self.is_hurt:
             self.current_anim = "hurt"
         elif self.is_reloading and "recharge" in self.animations:
@@ -268,7 +272,6 @@ class PlayerEntity(Entity):
         speed = self.speed if self.is_shooting else (self.run_speed if "shift" in pressed_keys else self.speed)
         speed *= self.get_status_multiplier("move_speed", default=1.0)
 
-        # Allow movement even while reloading, just a design choice
         if move_vec.length() > 0:
             self.pos = self.pos + move_vec.normalize() * (speed * dt)
 
@@ -283,7 +286,6 @@ class PlayerEntity(Entity):
         if not frames:
             return None
 
-        # Dynamically scale recharge anim speed to match the reload timer perfectly
         if self.current_anim == "recharge" and self.is_reloading:
             anim_speed = self.reload_time / len(frames)
         else:
@@ -305,11 +307,10 @@ class PlayerEntity(Entity):
         return frames[self.current_frame]
 
     def take_damage(self, amount: float):
-        """Apply damage to player. Returns True if player died."""
         self.hp -= amount
         self.is_hurt = True
         self.hurt_timer = self.hurt_duration
-        self.hit_flash_timer = 0.15  # brief red flash
+        self.hit_flash_timer = 0.15
         if self.hp <= 0:
             self.hp = 0
             self.is_dead = True
@@ -375,24 +376,20 @@ class PlayerEntity(Entity):
         if texture is None:
             return
         x, y = self.pos.x, self.pos.y
-        # Health bar based on hitbox
         hit_x, hit_y, hit_w, hit_h = self.get_hitbox()
         bar_width = hit_w
         bar_height = 7
         bar_x = hit_x
-        bar_y = hit_y + hit_h + 54  # ยกขึ้นอีก 50px
+        bar_y = hit_y + hit_h + 54
         with canvas:
-            # Health bar background
             Color(0.15, 0.15, 0.15, 0.7)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width, bar_height))
-            # Health bar foreground (green→red gradient)
             hp_ratio = max(0.0, min(1.0, self.hp / self.max_hp))
             Color(0.2 + 0.8 * (1-hp_ratio), 0.8 * hp_ratio, 0.2, 1)
             Rectangle(pos=(bar_x, bar_y), size=(bar_width * hp_ratio, bar_height))
 
-            # Draw player sprite with hit flash
             if self.hit_flash_timer > 0:
-                Color(1, 0.3, 0.3, 1)  # red tint on hit
+                Color(1, 0.3, 0.3, 1)
             else:
                 Color(1, 1, 1, 1)
             if self.facing == -1:
