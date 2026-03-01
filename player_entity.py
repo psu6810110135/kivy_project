@@ -22,6 +22,7 @@ class PlayerEntity(Entity):
         self._load_animation("shot", "Shot_", 5)
         self._load_animation("hurt", "Hurt", 3)
         self._load_animation("dead", "Dead", 4)
+        self._load_animation("recharge", "Recharge", 13)  # Load reload animation
 
         base_texture = self.animations["idle"][0]
         target_height = Window.height / 3
@@ -43,7 +44,7 @@ class PlayerEntity(Entity):
         self.reload_time = self.base_reload_time
         self.reload_timer = 0.0
 
-        # Progression / RPG stats (Phase A)
+        # Progression / RPG stats
         self.level = 1
         self.exp = 0
         self.next_exp = 100
@@ -148,6 +149,11 @@ class PlayerEntity(Entity):
             self.is_reloading = True
             self.reload_timer = self.reload_time
             self.stop_shooting()
+            # If the reload animation exists, reset timer to play it smoothly
+            if "recharge" in self.animations:
+                self.current_anim = "recharge"
+                self.current_frame = 0
+                self.frame_timer = 0.0
 
     def consume_ammo(self):
         if self.ammo > 0:
@@ -165,7 +171,8 @@ class PlayerEntity(Entity):
                 frames.append(texture)
                 bboxes.append(self._compute_bbox(texture))
             except Exception as exc:
-                print(f"Failed to load {path}: {exc}")
+                # Silently catch so we can support character skins with fewer frames (like Soldier_2)
+                pass
         if frames:
             self.animations[name] = frames
             self.anim_bboxes[name] = bboxes
@@ -241,10 +248,13 @@ class PlayerEntity(Entity):
 
         prev_anim = self.current_anim
 
-        if self.is_shooting:
-            self.current_anim = "shot"
-        elif self.is_hurt:
+        # Prioritize animations: Hurt -> Reloading -> Shooting -> Moving -> Idle
+        if self.is_hurt:
             self.current_anim = "hurt"
+        elif self.is_reloading and "recharge" in self.animations:
+            self.current_anim = "recharge"
+        elif self.is_shooting:
+            self.current_anim = "shot"
         elif move_vec.length() > 0:
             self.facing = 1 if move_vec.x >= 0 else -1
             self.current_anim = "run" if "shift" in pressed_keys else "walk"
@@ -258,6 +268,7 @@ class PlayerEntity(Entity):
         speed = self.speed if self.is_shooting else (self.run_speed if "shift" in pressed_keys else self.speed)
         speed *= self.get_status_multiplier("move_speed", default=1.0)
 
+        # Allow movement even while reloading, just a design choice
         if move_vec.length() > 0:
             self.pos = self.pos + move_vec.normalize() * (speed * dt)
 
@@ -272,8 +283,14 @@ class PlayerEntity(Entity):
         if not frames:
             return None
 
+        # Dynamically scale recharge anim speed to match the reload timer perfectly
+        if self.current_anim == "recharge" and self.is_reloading:
+            anim_speed = self.reload_time / len(frames)
+        else:
+            anim_speed = self.animation_speed
+
         self.frame_timer += dt
-        if self.frame_timer >= self.animation_speed:
+        if self.frame_timer >= anim_speed:
             self.frame_timer = 0.0
             if self.current_anim == "shot" and self.is_shooting and len(frames) >= 5:
                 if self.current_frame < 2 or self.current_frame > 4:
