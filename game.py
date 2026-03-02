@@ -1,4 +1,4 @@
-from typing import Set, List
+from typing import Set, List, Dict
 import random
 import math
 from kivy.clock import Clock
@@ -52,6 +52,147 @@ class ExpOrb:
             Rectangle(pos=(self.pos.x - half * 0.35, self.pos.y - half * 0.35), size=(self.size * 0.35, self.size * 0.35))
             PopMatrix()
 
+
+class BossOrb:
+    """Boss reward orb: larger purple collectible that grants a powerful upgrade choice."""
+
+    def __init__(self, pos: Vector):
+        self.pos = Vector(pos.x, pos.y)
+        self.size = 34
+        self.base_pull_speed = 210
+        self.max_pull_speed = 720
+
+    def get_hitbox(self):
+        half = self.size / 2
+        return (self.pos.x - half, self.pos.y - half, self.size, self.size)
+
+    def update(self, dt: float, player_center: Vector, pull_radius: float):
+        direction = player_center - self.pos
+        distance = direction.length()
+        if distance <= 0.001 or distance > pull_radius:
+            return
+
+        strength = 1.0 - (distance / pull_radius)
+        pull_speed = self.base_pull_speed + (self.max_pull_speed - self.base_pull_speed) * strength
+        self.pos += direction.normalize() * (pull_speed * dt)
+
+    def draw(self, canvas):
+        half = self.size / 2
+        with canvas:
+            Color(0.58, 0.22, 0.92, 0.95)
+            Ellipse(pos=(self.pos.x - half, self.pos.y - half), size=(self.size, self.size))
+            Color(0.9, 0.75, 1.0, 0.95)
+            inner = self.size * 0.42
+            Ellipse(pos=(self.pos.x - inner / 2, self.pos.y - inner / 2), size=(inner, inner))
+
+
+class GrenadeEntity:
+    """Thrown grenade that travels toward target then explodes after fuse timer."""
+
+    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float, textures: List = None):
+        self.size = 56.0
+        self.pos = Vector(start_pos.x, start_pos.y)
+        self.target_pos = Vector(target_pos.x, target_pos.y)
+        self.damage = damage
+        self.blast_radius = blast_radius
+        self.fuse_time = 0.85
+        self.time_left = self.fuse_time
+        self.travel_speed = 780.0
+        self.textures = textures or []
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.07
+
+        direction = self.target_pos - self.pos
+        if direction.length() <= 0.001:
+            direction = Vector(1, 0)
+        self.velocity = direction.normalize() * self.travel_speed
+        self.angle = math.degrees(math.atan2(self.velocity.y, self.velocity.x))
+
+    def update(self, dt: float):
+        self.time_left -= dt
+        if self.textures:
+            self.frame_timer += dt
+            if self.frame_timer >= self.animation_speed:
+                self.frame_timer = 0.0
+                self.current_frame = (self.current_frame + 1) % len(self.textures)
+        if self.time_left > 0:
+            to_target = self.target_pos - self.pos
+            if to_target.length() > 8:
+                self.pos += self.velocity * dt
+
+    def is_exploded(self) -> bool:
+        return self.time_left <= 0
+
+    def draw(self, canvas):
+        with canvas:
+            if self.textures:
+                tex = self.textures[self.current_frame]
+                Color(1, 1, 1, 1)
+                PushMatrix()
+                Rotate(angle=self.angle, origin=(self.pos.x, self.pos.y))
+                Rectangle(
+                    texture=tex,
+                    pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2),
+                    size=(self.size, self.size),
+                )
+                PopMatrix()
+            else:
+                Color(0.22, 0.28, 0.32, 0.95)
+                Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
+                Color(0.95, 0.4, 0.2, 0.95)
+                fuse_size = self.size * 0.35
+                Ellipse(
+                    pos=(self.pos.x - fuse_size / 2, self.pos.y + self.size * 0.22 - fuse_size / 2),
+                    size=(fuse_size, fuse_size),
+                )
+
+
+class ExplosionEffect:
+    """Visual explosion animation effect spawned when grenade detonates."""
+
+    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0):
+        self.pos = Vector(pos.x, pos.y)
+        self.textures = textures or []
+        self.size = size
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.05
+        self.done = False
+
+    def update(self, dt: float):
+        if self.done:
+            return
+
+        if not self.textures:
+            self.frame_timer += dt
+            if self.frame_timer >= 0.18:
+                self.done = True
+            return
+
+        self.frame_timer += dt
+        if self.frame_timer >= self.animation_speed:
+            self.frame_timer = 0.0
+            self.current_frame += 1
+            if self.current_frame >= len(self.textures):
+                self.done = True
+
+    def draw(self, canvas):
+        if self.done:
+            return
+        with canvas:
+            if self.textures:
+                tex = self.textures[min(self.current_frame, len(self.textures) - 1)]
+                Color(1, 1, 1, 0.95)
+                Rectangle(
+                    texture=tex,
+                    pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2),
+                    size=(self.size, self.size),
+                )
+            else:
+                Color(1, 0.45, 0.2, 0.55)
+                Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
+
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
     GAME_DURATION = 15 * 60  # 15 minutes in seconds
@@ -74,8 +215,22 @@ class GameWidget(Widget):
         self.min_spawn_interval = 0.22
         self.enemy_speed_multiplier = 1.0
         self.bullets: List[BulletEntity] = []
+        self.grenades: List[GrenadeEntity] = []
+        self.explosion_effects: List[ExplosionEffect] = []
         self.exp_orbs: List[ExpOrb] = []
+        self.boss_orbs: List[BossOrb] = []
         self.exp_pickup_radius = 52.0
+
+        # Passive skills (always active for now)
+        self.passive_attack_speed_mult = 0.82  # lower fire interval -> faster attacks
+        self.passive_lifesteal = 0.04          # 4% of dealt damage returned as HP
+        self.passive_pickup_radius_mult = 1.5
+
+        # Boss upgrade multipliers (stack with each boss reward choice)
+        self.boss_move_speed_mult = 1.0
+        self.boss_hp_mult = 1.0
+        self.boss_skill_cdr_mult = 1.0
+        self.boss_grenade_radius_mult = 1.0
         
         # Special enemy spawning (every 3 minutes, no max limit)
         self.special_enemies: List[SpecialEnemyEntity] = []
@@ -100,7 +255,38 @@ class GameWidget(Widget):
         
         self.fire_timer = 0.0
         self.firing = False
+        self.left_mouse_held = False
         self.burst_shots_remaining = 0  # Support for semi/burst fire modes
+
+        self.dodge_duration = 0.18
+        self.dodge_distance = 180.0
+        self.dodge_timer = 0.0
+        self.dodge_iframe_timer = 0.0
+        self.dodge_direction = Vector(1, 0)
+
+        self.grenade_throw_textures = self._load_sequential_textures(self.player.asset_path, "Grenade", max_frames=20)
+        self.grenade_explosion_textures = self._load_sequential_textures(self.player.asset_path, "Explosion", max_frames=20)
+        if not self.grenade_explosion_textures:
+            self.grenade_explosion_textures = self._load_sequential_textures("game_picture/player/Soldier_1", "Explosion", max_frames=20)
+
+        # Skill runtime state (active skills + hotkey slots)
+        self.skill_cooldowns: Dict[str, Dict[str, float]] = {
+            "dodge": {"base": 2.2, "remaining": 0.0},
+            "grenade": {"base": 6.5, "remaining": 0.0},
+            "shockwave": {"base": 8.0, "remaining": 0.0},
+        }
+        self.skill_slots = [
+            {"key": "Q", "bind": "Q / 1 / 3", "skill_id": "dodge", "label": "Dodge"},
+            {"key": "E", "bind": "E", "skill_id": "grenade", "label": "Grenade"},
+            {"key": "2", "bind": "2", "skill_id": "shockwave", "label": "Shockwave"},
+        ]
+        self.skill_key_to_skill = {
+            "q": "dodge",
+            "1": "dodge",
+            "3": "dodge",
+            "e": "grenade",
+            "2": "shockwave",
+        }
 
         # Level-up selection overlay
         self.levelup_active = False
@@ -113,6 +299,17 @@ class GameWidget(Widget):
             "int": "INT +1  (Skill Cooldown -)",
             "vit": "VIT +1  (Max HP +)",
             "luck": "LUCK +1 (Crit / Drop +)",
+        }
+
+        # Boss upgrade overlay
+        self.boss_upgrade_active = False
+        self.pending_boss_upgrades = 0
+        self.boss_upgrade_choices = []
+        self.boss_upgrade_labels = {
+            "speed": "Move Speed x1.5",
+            "hp": "Max HP x1.5",
+            "skill_cooldown": "Skill Cooldown x1.5",
+            "radius": "Grenade Radius x1.5",
         }
 
         # Game timer
@@ -189,6 +386,15 @@ class GameWidget(Widget):
                 self._apply_levelup_choice(int(key) - 1)
             return True
 
+        if self.boss_upgrade_active:
+            if key in ('1', '2', '3'):
+                self._apply_boss_upgrade_choice(int(key) - 1)
+            return True
+
+        if key in self.skill_key_to_skill and not self.player.is_dead:
+            self._use_skill_from_key(key)
+            return True
+
         if key == '9':
             self.debug_mode = not self.debug_mode
             if not self.debug_mode:
@@ -259,8 +465,33 @@ class GameWidget(Widget):
                         break
                 return True
 
+            # Process boss upgrade cards
+            if self.boss_upgrade_active:
+                s = self.height / 1080.0 if self.height > 0 else 1.0
+                panel_w = self.width * 0.55
+                panel_h = self.height * 0.52
+                panel_x = (self.width - panel_w) / 2
+                panel_y = (self.height - panel_h) / 2
+
+                card_count = len(self.boss_upgrade_choices)
+                card_spacing = 24 * s
+                total_card_width = panel_w - 80 * s
+                card_w = (total_card_width - card_spacing * (card_count - 1)) / max(1, card_count)
+                card_h = panel_h * 0.48
+                card_start_x = panel_x + 40 * s
+                card_y = panel_y + 30 * s
+
+                for idx in range(card_count):
+                    cx = card_start_x + idx * (card_w + card_spacing)
+                    if cx <= touch.x <= cx + card_w and card_y <= touch.y <= card_y + card_h:
+                        self._apply_boss_upgrade_choice(idx)
+                        break
+                return True
+
             if self.player.is_dead:
                 return True
+
+            self.left_mouse_held = True
             
             # Weapon firing / reloading logic
             if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
@@ -286,6 +517,7 @@ class GameWidget(Widget):
 
     def on_touch_up(self, touch):
         if touch.button == 'left':
+            self.left_mouse_held = False
             mode = getattr(self.player, 'firing_mode', 'AUTO')
             if mode == 'AUTO':
                 self.player.stop_shooting()
@@ -295,11 +527,14 @@ class GameWidget(Widget):
         return super().on_touch_up(touch)
 
     def update(self, dt: float):
-        if self.levelup_active:
+        if self.levelup_active or self.boss_upgrade_active:
             self._update_progression_hud()
             self._draw_scene()
             self._update_debug(0.0)
             return
+
+        self._update_skill_cooldowns(dt)
+        self._update_dodge_timers(dt)
 
         # Update game time (stop at max duration)
         if self.game_time < self.GAME_DURATION:
@@ -317,6 +552,7 @@ class GameWidget(Widget):
         self._update_progression_hud()
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+        self._update_dodge_state(dt)
 
         # If player is dead, skip gameplay updates but still draw
         if self.player.is_dead:
@@ -334,6 +570,8 @@ class GameWidget(Widget):
             self._draw_scene()
             self._update_debug(dt)
             return
+
+        self._resume_auto_fire_if_holding()
 
         # Keep player facing aligned with cursor while shooting
         if self.firing:
@@ -398,7 +636,7 @@ class GameWidget(Widget):
                 self.firing = False
                 self.burst_shots_remaining = 0
             elif getattr(self.player, 'ammo', 1) > 0:
-                if self.fire_timer >= self.fire_rate:
+                if self.fire_timer >= self._get_effective_fire_rate():
                     self.fire_timer = 0.0  # Reset cooldown explicitly to avoid rapid stack bursts
                     self._spawn_bullet()
                     if hasattr(self.player, 'consume_ammo'):
@@ -432,6 +670,7 @@ class GameWidget(Widget):
                 if self._rects_intersect(bullet_box, enemy.get_hitbox()):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
+                    self._apply_lifesteal(bullet_damage)
                     if enemy_died:
                         self.kill_count += 1
                         self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
@@ -445,14 +684,28 @@ class GameWidget(Widget):
                     if self._rects_intersect(bullet_box, se.get_hitbox()):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
+                        self._apply_lifesteal(bullet_damage)
                         if enemy_died:
                             self.kill_count += 1
                             self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
+                            self._drop_boss_orb(se)
                         hit = True
                         break
             if hit:
                 if b in self.bullets:
                     self.bullets.remove(b)
+
+        # Update grenades and explode when timer completes
+        for grenade in self.grenades[:]:
+            grenade.update(dt)
+            if grenade.is_exploded() or self._grenade_hits_enemy(grenade):
+                self._explode_grenade(grenade)
+                self.grenades.remove(grenade)
+
+        for effect in self.explosion_effects[:]:
+            effect.update(dt)
+            if effect.done:
+                self.explosion_effects.remove(effect)
         
         # Update and clean up enemy projectiles
         for proj in self.enemy_projectiles[:]:
@@ -462,7 +715,7 @@ class GameWidget(Widget):
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
                 # Hit player! Apply damage (unless godmode)
-                if not self.god_mode:
+                if self._can_player_take_damage():
                     # Kitsune fire damage
                     fire_damage = 25
                     for se in self.special_enemies:
@@ -481,7 +734,7 @@ class GameWidget(Widget):
 
         # Update exp orbs: pull toward player and collect on touch
         pull_radius = self._get_exp_pull_radius()
-        pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius)
+        pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius * self.passive_pickup_radius_mult)
         for orb in self.exp_orbs[:]:
             orb.update(dt, player_center, pull_radius)
             if self._rects_intersect(orb.get_hitbox(), pickup_box):
@@ -493,6 +746,20 @@ class GameWidget(Widget):
             margin = 300
             if orb.pos.x < -margin or orb.pos.x > self.width + margin or orb.pos.y < -margin or orb.pos.y > self.height + margin:
                 self.exp_orbs.remove(orb)
+
+        # Update boss reward orbs
+        for boss_orb in self.boss_orbs[:]:
+            boss_orb.update(dt, player_center, pull_radius * 0.95)
+            if self._rects_intersect(boss_orb.get_hitbox(), pickup_box):
+                self.boss_orbs.remove(boss_orb)
+                self.pending_boss_upgrades += 1
+                if not self.boss_upgrade_active:
+                    self._open_next_boss_upgrade()
+                continue
+
+            margin = 300
+            if boss_orb.pos.x < -margin or boss_orb.pos.x > self.width + margin or boss_orb.pos.y < -margin or boss_orb.pos.y > self.height + margin:
+                self.boss_orbs.remove(boss_orb)
         
         # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
@@ -513,7 +780,7 @@ class GameWidget(Widget):
                     continue
                 pbox = self.player.get_hitbox()
                 if self._rects_intersect(attack_box, pbox):
-                    if not self.god_mode:
+                    if self._can_player_take_damage():
                         self.player.take_damage(enemy.damage)
                     enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
                     if not hasattr(self, 'player_hit_flash'):
@@ -669,9 +936,19 @@ class GameWidget(Widget):
             for b in self.bullets:
                 b.draw(self.canvas)
 
+            # Draw grenades
+            for grenade in self.grenades:
+                grenade.draw(self.canvas)
+
+            for effect in self.explosion_effects:
+                effect.draw(self.canvas)
+
             # Draw exp orbs
             for orb in self.exp_orbs:
                 orb.draw(self.canvas)
+
+            for boss_orb in self.boss_orbs:
+                boss_orb.draw(self.canvas)
 
             # Draw enemy projectiles
             for proj in self.enemy_projectiles:
@@ -682,6 +959,9 @@ class GameWidget(Widget):
 
             if self.levelup_active:
                 self._draw_levelup_overlay()
+
+            if self.boss_upgrade_active:
+                self._draw_boss_upgrade_overlay()
 
             # Debug hitboxes
             if self.debug_mode:
@@ -879,6 +1159,7 @@ class GameWidget(Widget):
         self._draw_timer_panel(s)
         self._draw_combat_info_panel(s)
         self._draw_ammo_panel(s)
+        self._draw_skill_slots(s)
         
         # Death overlay
         if self.player.is_dead:
@@ -1107,6 +1388,63 @@ class GameWidget(Widget):
             font_size=int(12 * s), color=(0.4, 0.95, 0.5, 0.8)
         )
 
+        self._draw_outlined_text(
+            f"Boss Orbs: {len(self.boss_orbs)}", panel_x + pad, panel_y + panel_h - 88 * s,
+            font_size=int(11 * s), color=(0.78, 0.45, 1.0, 0.85)
+        )
+
+        self._draw_outlined_text(
+            f"Passives: AS+ LS+ PR+", panel_x + pad, panel_y + panel_h - 90 * s,
+            font_size=int(10 * s), color=(0.75, 0.85, 0.95, 0.75)
+        )
+
+    def _draw_skill_slots(self, s):
+        """Draw centered bottom skill slots with cooldown overlay and countdown numbers."""
+        slot_count = len(self.skill_slots)
+        slot_w = 88 * s
+        slot_h = 88 * s
+        gap = 12 * s
+        total_w = slot_count * slot_w + (slot_count - 1) * gap
+        start_x = (self.width - total_w) / 2
+        y = 18 * s
+
+        for idx, slot in enumerate(self.skill_slots):
+            x = start_x + idx * (slot_w + gap)
+            skill_id = slot["skill_id"]
+
+            Color(0.05, 0.06, 0.1, 0.86)
+            RoundedRectangle(pos=(x, y), size=(slot_w, slot_h), radius=[10 * s])
+
+            is_ready = self._is_skill_ready(skill_id)
+            if is_ready:
+                Color(0.35, 0.75, 0.45, 0.75)
+            else:
+                Color(0.75, 0.35, 0.35, 0.75)
+            Line(rounded_rectangle=(x, y, slot_w, slot_h, 10 * s), width=1.8)
+
+            self._draw_outlined_text(
+                slot["bind"], x + 8 * s, y + slot_h - 22 * s,
+                font_size=int(14 * s), color=(0.95, 0.95, 1, 0.95), bold=True
+            )
+            self._draw_outlined_text(
+                slot["label"], x + slot_w / 2, y + 14 * s,
+                font_size=int(11 * s), color=(0.8, 0.86, 0.95, 0.9),
+                anchor_x='center', anchor_y='bottom'
+            )
+
+            remaining = self._get_skill_remaining(skill_id)
+            if remaining > 0:
+                cooldown = self._get_skill_cooldown(skill_id)
+                ratio = max(0.0, min(1.0, remaining / cooldown)) if cooldown > 0 else 0.0
+                overlay_h = slot_h * ratio
+                Color(0.02, 0.03, 0.05, 0.72)
+                Rectangle(pos=(x, y), size=(slot_w, overlay_h))
+                self._draw_outlined_text(
+                    f"{remaining:.1f}", x + slot_w / 2, y + slot_h / 2,
+                    font_size=int(22 * s), color=(1, 0.95, 0.95, 0.95),
+                    anchor_x='center', anchor_y='center', bold=True
+                )
+
     def _update_debug(self, dt: float):
         fps = Clock.get_fps() or 0
         god_str = "  [GODMODE ON]" if self.god_mode else ""
@@ -1222,9 +1560,6 @@ class GameWidget(Widget):
 
             offset = Vector(random.uniform(-24, 24), random.uniform(-18, 18))
             self.exp_orbs.append(ExpOrb(center + offset, orb_value))
-
-    def _get_exp_pull_radius(self) -> float:
-        return 150.0 + (self.player.luck * 14.0) + (self.player.int * 8.0)
 
     def _apply_levelup_choice(self, choice_index: int):
         if not self.levelup_active:
@@ -1369,6 +1704,77 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='bottom'
         )
 
+    def _draw_boss_upgrade_overlay(self):
+        """Boss reward selection overlay (powerful x1.5 upgrade choice)."""
+        s = self.height / 1080.0 if self.height > 0 else 1.0
+
+        Color(0, 0, 0, 0.68)
+        Rectangle(pos=(0, 0), size=self.size)
+
+        panel_w = self.width * 0.55
+        panel_h = self.height * 0.52
+        panel_x = (self.width - panel_w) / 2
+        panel_y = (self.height - panel_h) / 2
+
+        Color(0.11, 0.06, 0.18, 0.96)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[20 * s])
+        Color(0.72, 0.4, 1.0, 0.8)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 20 * s), width=2.5)
+
+        title_y = panel_y + panel_h - 55 * s
+        self._draw_outlined_text(
+            "BOSS REWARD", self.width / 2, title_y,
+            font_size=int(40 * s), color=(0.92, 0.74, 1, 1),
+            anchor_x='center', anchor_y='center', bold=True
+        )
+        self._draw_outlined_text(
+            "Choose one upgrade (x1.5)", self.width / 2, title_y - 34 * s,
+            font_size=int(18 * s), color=(0.86, 0.86, 0.95, 0.95),
+            anchor_x='center', anchor_y='center'
+        )
+
+        card_count = len(self.boss_upgrade_choices)
+        card_spacing = 24 * s
+        total_card_width = panel_w - 80 * s
+        card_w = (total_card_width - card_spacing * (card_count - 1)) / max(1, card_count)
+        card_h = panel_h * 0.48
+        card_start_x = panel_x + 40 * s
+        card_y = panel_y + 30 * s
+
+        accent_map = {
+            "speed": (0.35, 0.95, 0.45, 1),
+            "hp": (0.95, 0.35, 0.42, 1),
+            "skill_cooldown": (0.42, 0.75, 1.0, 1),
+            "radius": (0.85, 0.55, 1.0, 1),
+        }
+
+        for idx, key in enumerate(self.boss_upgrade_choices):
+            cx = card_start_x + idx * (card_w + card_spacing)
+            accent = accent_map.get(key, (1, 1, 1, 1))
+            label = self.boss_upgrade_labels.get(key, key)
+
+            Color(0.12, 0.1, 0.2, 0.95)
+            RoundedRectangle(pos=(cx, card_y), size=(card_w, card_h), radius=[12 * s])
+            Color(*accent[:3], 0.75)
+            Line(rounded_rectangle=(cx, card_y, card_w, card_h, 12 * s), width=1.8)
+
+            self._draw_outlined_text(
+                f"{idx + 1}", cx + card_w / 2, card_y + card_h - 26 * s,
+                font_size=int(22 * s), color=accent,
+                anchor_x='center', anchor_y='center', bold=True
+            )
+            self._draw_outlined_text(
+                label, cx + card_w / 2, card_y + card_h / 2,
+                font_size=int(22 * s), color=accent,
+                anchor_x='center', anchor_y='center', bold=True
+            )
+
+        self._draw_outlined_text(
+            "Click card or press 1 / 2 / 3", self.width / 2, panel_y + 10 * s,
+            font_size=int(16 * s), color=(0.82, 0.82, 0.9, 0.75),
+            anchor_x='center', anchor_y='bottom'
+        )
+
     def _get_enemy_exp_reward(self, enemy) -> int:
         if isinstance(enemy, SpecialEnemyEntity):
             return 80
@@ -1387,6 +1793,334 @@ class GameWidget(Widget):
     def _sync_combat_from_player(self):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
+
+        # Re-apply persistent boss multipliers on top of recalculated base stats
+        base_walk_speed = self.player.base_walk_speed + (self.player.agi - 1) * 8
+        base_run_speed = self.player.base_run_speed + (self.player.agi - 1) * 10
+        self.player.speed = base_walk_speed * self.boss_move_speed_mult
+        self.player.run_speed = base_run_speed * self.boss_move_speed_mult
+
+        base_max_hp = self.player.base_max_hp + (self.player.vit - 1) * 18
+        hp_ratio = self.player.hp / self.player.max_hp if self.player.max_hp > 0 else 1.0
+        self.player.max_hp = base_max_hp * self.boss_hp_mult
+        self.player.hp = max(1.0, min(self.player.max_hp, self.player.max_hp * hp_ratio))
+
+    def _resume_auto_fire_if_holding(self):
+        """Resume AUTO fire when reload finishes while left mouse is still held."""
+        if not self.left_mouse_held or self.levelup_active or self.player.is_dead:
+            return
+
+        mode = getattr(self.player, 'firing_mode', 'AUTO')
+        if mode != 'AUTO':
+            return
+
+        if self.firing:
+            return
+
+        if getattr(self.player, 'is_reloading', False):
+            return
+
+        if getattr(self.player, 'ammo', 0) <= 0:
+            if hasattr(self.player, 'start_reload'):
+                self.player.start_reload()
+            return
+
+        self.firing = True
+        self.player.start_shooting()
+
+    def _get_effective_fire_rate(self) -> float:
+        return max(0.045, self.fire_rate * self.passive_attack_speed_mult)
+
+    def _apply_lifesteal(self, damage_dealt: float):
+        if damage_dealt <= 0 or self.player.is_dead:
+            return
+        heal_amount = damage_dealt * self.passive_lifesteal
+        self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
+
+    def _load_sequential_textures(self, base_path: str, prefix: str, max_frames: int = 20) -> List:
+        textures = []
+        for idx in range(1, max_frames + 1):
+            path = f"{base_path}/{prefix}{idx}.png"
+            try:
+                tex = CoreImage(path).texture
+                textures.append(tex)
+            except Exception:
+                if idx > 1:
+                    break
+        return textures
+
+    def _can_player_take_damage(self) -> bool:
+        return (not self.god_mode) and self.dodge_iframe_timer <= 0
+
+    def _update_dodge_timers(self, dt: float):
+        if self.dodge_timer > 0:
+            self.dodge_timer = max(0.0, self.dodge_timer - dt)
+        if self.dodge_iframe_timer > 0:
+            self.dodge_iframe_timer = max(0.0, self.dodge_iframe_timer - dt)
+
+    def _update_dodge_state(self, dt: float):
+        if self.dodge_timer <= 0:
+            return
+
+        dash_speed = self.dodge_distance / max(0.001, self.dodge_duration)
+        self.player.pos += self.dodge_direction * (dash_speed * dt)
+        self._clamp_player_to_bounds()
+
+        if self.dodge_direction.x != 0:
+            self.player.facing = 1 if self.dodge_direction.x > 0 else -1
+        if "run" in self.player.animations:
+            self.player.current_anim = "run"
+            run_frames = self.player.animations.get("run", [])
+            if run_frames:
+                self.player.current_frame = self.player.current_frame % len(run_frames)
+                self.player.frame_timer += dt
+                if self.player.frame_timer >= self.player.animation_speed:
+                    self.player.frame_timer = 0.0
+                    self.player.current_frame = (self.player.current_frame + 1) % len(run_frames)
+
+    def _clamp_player_to_bounds(self):
+        max_x = max(0, self.width - self.player.size[0])
+        block_unit = self.height / 10.0
+        min_y = block_unit
+        max_y = self.height - (3 * block_unit) - self.player.size[1]
+        self.player.pos.x = max(0, min(self.player.pos.x, max_x))
+        self.player.pos.y = max(min_y, min(self.player.pos.y, max(min_y, max_y)))
+
+    def _update_skill_cooldowns(self, dt: float):
+        for payload in self.skill_cooldowns.values():
+            if payload["remaining"] > 0:
+                payload["remaining"] = max(0.0, payload["remaining"] - dt)
+
+    def _get_skill_cooldown(self, skill_id: str) -> float:
+        payload = self.skill_cooldowns.get(skill_id)
+        if payload is None:
+            return 0.0
+        return payload["base"] * self.player.skill_cooldown_multiplier * self.boss_skill_cdr_mult
+
+    def _get_skill_remaining(self, skill_id: str) -> float:
+        payload = self.skill_cooldowns.get(skill_id)
+        if payload is None:
+            return 0.0
+        return payload["remaining"]
+
+    def _is_skill_ready(self, skill_id: str) -> bool:
+        return self._get_skill_remaining(skill_id) <= 0.0
+
+    def _start_skill_cooldown(self, skill_id: str):
+        payload = self.skill_cooldowns.get(skill_id)
+        if payload is None:
+            return
+        payload["remaining"] = self._get_skill_cooldown(skill_id)
+
+    def _use_skill_from_key(self, key: str):
+        skill_id = self.skill_key_to_skill.get(key)
+        if skill_id is None:
+            return
+
+        if not self._is_skill_ready(skill_id):
+            return
+
+        used = False
+        if skill_id == "dodge":
+            used = self._cast_dodge()
+        elif skill_id == "grenade":
+            used = self._cast_grenade()
+        elif skill_id == "shockwave":
+            used = self._cast_shockwave()
+
+        if used:
+            self._start_skill_cooldown(skill_id)
+
+    def _cast_dodge(self) -> bool:
+        move_vec = Vector(0, 0)
+        if "w" in self.pressed_keys:
+            move_vec += Vector(0, 1)
+        if "s" in self.pressed_keys:
+            move_vec += Vector(0, -1)
+        if "a" in self.pressed_keys:
+            move_vec += Vector(-1, 0)
+        if "d" in self.pressed_keys:
+            move_vec += Vector(1, 0)
+
+        if move_vec.length() <= 0:
+            move_vec = Vector(self.player.facing, 0)
+
+        self.dodge_direction = move_vec.normalize()
+        self.dodge_distance = 180.0 + (self.player.agi * 5.0)
+        self.dodge_timer = self.dodge_duration
+        self.dodge_iframe_timer = self.dodge_duration + 0.08
+
+        self.player.stop_shooting()
+        if "run" in self.player.animations:
+            self.player.current_anim = "run"
+            run_frames = self.player.animations.get("run", [])
+            if run_frames:
+                self.player.current_frame = self.player.current_frame % len(run_frames)
+            self.player.frame_timer = 0.0
+        return True
+
+    def _cast_grenade(self) -> bool:
+        mx, my = Window.mouse_pos
+        target = Vector(*self.to_widget(mx, my))
+        pbox = self.player.get_hitbox()
+        start = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
+
+        damage = 70.0 + (self.player.str * 5.0)
+        blast_radius = (220.0 + (self.player.int * 6.0)) * self.boss_grenade_radius_mult
+        self.grenades.append(
+            GrenadeEntity(
+                start,
+                target,
+                damage=damage,
+                blast_radius=blast_radius,
+                textures=self.grenade_throw_textures,
+            )
+        )
+        return True
+
+    def _open_next_boss_upgrade(self):
+        if self.pending_boss_upgrades <= 0:
+            self.boss_upgrade_active = False
+            self.boss_upgrade_choices = []
+            return
+
+        self.pending_boss_upgrades -= 1
+        self.boss_upgrade_active = True
+        pool = ["speed", "hp", "skill_cooldown", "radius"]
+        self.boss_upgrade_choices = random.sample(pool, 3)
+
+        self.player.stop_shooting()
+        self.firing = False
+        self.left_mouse_held = False
+
+    def _apply_boss_upgrade_choice(self, choice_index: int):
+        if not self.boss_upgrade_active:
+            return
+        if choice_index < 0 or choice_index >= len(self.boss_upgrade_choices):
+            return
+
+        selected = self.boss_upgrade_choices[choice_index]
+        if selected == "speed":
+            self.boss_move_speed_mult *= 1.5
+        elif selected == "hp":
+            self.boss_hp_mult *= 1.5
+        elif selected == "skill_cooldown":
+            self.boss_skill_cdr_mult = max(0.05, self.boss_skill_cdr_mult / 1.5)
+        elif selected == "radius":
+            self.boss_grenade_radius_mult *= 1.5
+
+        self._sync_combat_from_player()
+
+        if self.pending_boss_upgrades > 0:
+            self._open_next_boss_upgrade()
+        else:
+            self.boss_upgrade_active = False
+            self.boss_upgrade_choices = []
+
+    def _cast_shockwave(self) -> bool:
+        center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
+        radius = 185.0 + (self.player.int * 6.0)
+        damage = 48.0 + (self.player.int * 4.0) + (self.player.str * 2.0)
+
+        self.explosion_effects.append(
+            ExplosionEffect(
+                center,
+                textures=self.grenade_explosion_textures,
+                size=max(170.0, radius * 1.8),
+            )
+        )
+
+        for enemy in self.enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - center).length() <= radius:
+                enemy_died = enemy.take_damage(damage)
+                self._apply_lifesteal(damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+
+        for enemy in self.special_enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - center).length() <= radius:
+                enemy_died = enemy.take_damage(damage)
+                self._apply_lifesteal(damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+                    self._drop_boss_orb(enemy)
+
+        return True
+
+    def _grenade_hits_enemy(self, grenade: GrenadeEntity) -> bool:
+        hit_radius = max(24.0, grenade.size * 0.35)
+        gcenter = grenade.pos
+
+        for enemy in self.enemies:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+                return True
+
+        for enemy in self.special_enemies:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+                return True
+
+        return False
+
+    def _explode_grenade(self, grenade: GrenadeEntity):
+        blast_center = grenade.pos
+
+        effect_size = max(120.0, grenade.blast_radius * 1.9)
+        self.explosion_effects.append(
+            ExplosionEffect(
+                blast_center,
+                textures=self.grenade_explosion_textures,
+                size=effect_size,
+            )
+        )
+
+        for enemy in self.enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            center = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (center - blast_center).length() <= grenade.blast_radius:
+                enemy_died = enemy.take_damage(grenade.damage)
+                self._apply_lifesteal(grenade.damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+
+        for enemy in self.special_enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            center = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (center - blast_center).length() <= grenade.blast_radius:
+                enemy_died = enemy.take_damage(grenade.damage)
+                self._apply_lifesteal(grenade.damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+                    self._drop_boss_orb(enemy)
+
+    def _drop_boss_orb(self, enemy):
+        hitbox = enemy.get_hitbox()
+        center = Vector(hitbox[0] + hitbox[2] / 2, hitbox[1] + hitbox[3] / 2)
+        offset = Vector(random.uniform(-18, 18), random.uniform(-12, 12))
+        self.boss_orbs.append(BossOrb(center + offset))
 
     def _update_progression_hud(self):
         """Progression HUD is now drawn on canvas in _draw_hud_panel. Keep label cleared."""
@@ -1474,6 +2208,10 @@ class GameWidget(Widget):
         ))
         self.enemy_spawn_counter += 1
         self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
+
+    def _get_exp_pull_radius(self) -> float:
+        base = 150.0 + (self.player.luck * 14.0) + (self.player.int * 8.0)
+        return base
 
     def on_size(self, *args):
         if not self._did_initial_player_center and self.width > 0 and self.height > 0:
