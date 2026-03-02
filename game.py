@@ -56,8 +56,8 @@ class ExpOrb:
 class GrenadeEntity:
     """Thrown grenade that travels toward target then explodes after fuse timer."""
 
-    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float):
-        self.size = 18.0
+    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float, textures: List = None):
+        self.size = 56.0
         self.pos = Vector(start_pos.x, start_pos.y)
         self.target_pos = Vector(target_pos.x, target_pos.y)
         self.damage = damage
@@ -65,14 +65,24 @@ class GrenadeEntity:
         self.fuse_time = 0.85
         self.time_left = self.fuse_time
         self.travel_speed = 780.0
+        self.textures = textures or []
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.07
 
         direction = self.target_pos - self.pos
         if direction.length() <= 0.001:
             direction = Vector(1, 0)
         self.velocity = direction.normalize() * self.travel_speed
+        self.angle = math.degrees(math.atan2(self.velocity.y, self.velocity.x))
 
     def update(self, dt: float):
         self.time_left -= dt
+        if self.textures:
+            self.frame_timer += dt
+            if self.frame_timer >= self.animation_speed:
+                self.frame_timer = 0.0
+                self.current_frame = (self.current_frame + 1) % len(self.textures)
         if self.time_left > 0:
             to_target = self.target_pos - self.pos
             if to_target.length() > 8:
@@ -83,14 +93,72 @@ class GrenadeEntity:
 
     def draw(self, canvas):
         with canvas:
-            Color(0.22, 0.28, 0.32, 0.95)
-            Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
-            Color(0.95, 0.4, 0.2, 0.95)
-            fuse_size = self.size * 0.35
-            Ellipse(
-                pos=(self.pos.x - fuse_size / 2, self.pos.y + self.size * 0.22 - fuse_size / 2),
-                size=(fuse_size, fuse_size),
-            )
+            if self.textures:
+                tex = self.textures[self.current_frame]
+                Color(1, 1, 1, 1)
+                PushMatrix()
+                Rotate(angle=self.angle, origin=(self.pos.x, self.pos.y))
+                Rectangle(
+                    texture=tex,
+                    pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2),
+                    size=(self.size, self.size),
+                )
+                PopMatrix()
+            else:
+                Color(0.22, 0.28, 0.32, 0.95)
+                Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
+                Color(0.95, 0.4, 0.2, 0.95)
+                fuse_size = self.size * 0.35
+                Ellipse(
+                    pos=(self.pos.x - fuse_size / 2, self.pos.y + self.size * 0.22 - fuse_size / 2),
+                    size=(fuse_size, fuse_size),
+                )
+
+
+class ExplosionEffect:
+    """Visual explosion animation effect spawned when grenade detonates."""
+
+    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0):
+        self.pos = Vector(pos.x, pos.y)
+        self.textures = textures or []
+        self.size = size
+        self.current_frame = 0
+        self.frame_timer = 0.0
+        self.animation_speed = 0.05
+        self.done = False
+
+    def update(self, dt: float):
+        if self.done:
+            return
+
+        if not self.textures:
+            self.frame_timer += dt
+            if self.frame_timer >= 0.18:
+                self.done = True
+            return
+
+        self.frame_timer += dt
+        if self.frame_timer >= self.animation_speed:
+            self.frame_timer = 0.0
+            self.current_frame += 1
+            if self.current_frame >= len(self.textures):
+                self.done = True
+
+    def draw(self, canvas):
+        if self.done:
+            return
+        with canvas:
+            if self.textures:
+                tex = self.textures[min(self.current_frame, len(self.textures) - 1)]
+                Color(1, 1, 1, 0.95)
+                Rectangle(
+                    texture=tex,
+                    pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2),
+                    size=(self.size, self.size),
+                )
+            else:
+                Color(1, 0.45, 0.2, 0.55)
+                Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
@@ -115,6 +183,7 @@ class GameWidget(Widget):
         self.enemy_speed_multiplier = 1.0
         self.bullets: List[BulletEntity] = []
         self.grenades: List[GrenadeEntity] = []
+        self.explosion_effects: List[ExplosionEffect] = []
         self.exp_orbs: List[ExpOrb] = []
         self.exp_pickup_radius = 52.0
         
@@ -143,24 +212,32 @@ class GameWidget(Widget):
         self.firing = False
         self.burst_shots_remaining = 0  # Support for semi/burst fire modes
 
+        self.dodge_duration = 0.18
+        self.dodge_distance = 180.0
+        self.dodge_timer = 0.0
+        self.dodge_iframe_timer = 0.0
+        self.dodge_direction = Vector(1, 0)
+
+        self.grenade_throw_textures = self._load_sequential_textures(self.player.asset_path, "Grenade", max_frames=20)
+        self.grenade_explosion_textures = self._load_sequential_textures(self.player.asset_path, "Explosion", max_frames=20)
+        if not self.grenade_explosion_textures:
+            self.grenade_explosion_textures = self._load_sequential_textures("game_picture/player/Soldier_1", "Explosion", max_frames=20)
+
         # Skill runtime state (active skills + hotkey slots)
         self.skill_cooldowns: Dict[str, Dict[str, float]] = {
             "dodge": {"base": 2.2, "remaining": 0.0},
             "grenade": {"base": 6.5, "remaining": 0.0},
         }
         self.skill_slots = [
-            {"key": "Q", "skill_id": "dodge", "label": "Dodge"},
-            {"key": "E", "skill_id": "grenade", "label": "Grenade"},
-            {"key": "1", "skill_id": "dodge", "label": "Dodge"},
-            {"key": "2", "skill_id": "grenade", "label": "Grenade"},
-            {"key": "3", "skill_id": "dodge", "label": "Dodge"},
+            {"key": "Q", "bind": "Q / 1 / 3", "skill_id": "dodge", "label": "Dodge"},
+            {"key": "E", "bind": "E / 2", "skill_id": "grenade", "label": "Grenade"},
         ]
-        self.skill_key_to_slot = {
-            "q": 0,
-            "e": 1,
-            "1": 2,
-            "2": 3,
-            "3": 4,
+        self.skill_key_to_skill = {
+            "q": "dodge",
+            "1": "dodge",
+            "3": "dodge",
+            "e": "grenade",
+            "2": "grenade",
         }
 
         # Level-up selection overlay
@@ -250,7 +327,7 @@ class GameWidget(Widget):
                 self._apply_levelup_choice(int(key) - 1)
             return True
 
-        if key in self.skill_key_to_slot and not self.player.is_dead:
+        if key in self.skill_key_to_skill and not self.player.is_dead:
             self._use_skill_from_key(key)
             return True
 
@@ -367,6 +444,7 @@ class GameWidget(Widget):
             return
 
         self._update_skill_cooldowns(dt)
+        self._update_dodge_timers(dt)
 
         # Update game time (stop at max duration)
         if self.game_time < self.GAME_DURATION:
@@ -384,6 +462,7 @@ class GameWidget(Widget):
         self._update_progression_hud()
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
+        self._update_dodge_state(dt)
 
         # If player is dead, skip gameplay updates but still draw
         if self.player.is_dead:
@@ -527,6 +606,11 @@ class GameWidget(Widget):
             if grenade.is_exploded():
                 self._explode_grenade(grenade)
                 self.grenades.remove(grenade)
+
+        for effect in self.explosion_effects[:]:
+            effect.update(dt)
+            if effect.done:
+                self.explosion_effects.remove(effect)
         
         # Update and clean up enemy projectiles
         for proj in self.enemy_projectiles[:]:
@@ -536,7 +620,7 @@ class GameWidget(Widget):
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
                 # Hit player! Apply damage (unless godmode)
-                if not self.god_mode:
+                if self._can_player_take_damage():
                     # Kitsune fire damage
                     fire_damage = 25
                     for se in self.special_enemies:
@@ -587,7 +671,7 @@ class GameWidget(Widget):
                     continue
                 pbox = self.player.get_hitbox()
                 if self._rects_intersect(attack_box, pbox):
-                    if not self.god_mode:
+                    if self._can_player_take_damage():
                         self.player.take_damage(enemy.damage)
                     enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
                     if not hasattr(self, 'player_hit_flash'):
@@ -746,6 +830,9 @@ class GameWidget(Widget):
             # Draw grenades
             for grenade in self.grenades:
                 grenade.draw(self.canvas)
+
+            for effect in self.explosion_effects:
+                effect.draw(self.canvas)
 
             # Draw exp orbs
             for orb in self.exp_orbs:
@@ -1211,7 +1298,7 @@ class GameWidget(Widget):
             Line(rounded_rectangle=(x, y, slot_w, slot_h, 10 * s), width=1.8)
 
             self._draw_outlined_text(
-                slot["key"], x + 8 * s, y + slot_h - 22 * s,
+                slot["bind"], x + 8 * s, y + slot_h - 22 * s,
                 font_size=int(14 * s), color=(0.95, 0.95, 1, 0.95), bold=True
             )
             self._draw_outlined_text(
@@ -1514,6 +1601,47 @@ class GameWidget(Widget):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
 
+    def _load_sequential_textures(self, base_path: str, prefix: str, max_frames: int = 20) -> List:
+        textures = []
+        for idx in range(1, max_frames + 1):
+            path = f"{base_path}/{prefix}{idx}.png"
+            try:
+                tex = CoreImage(path).texture
+                textures.append(tex)
+            except Exception:
+                if idx > 1:
+                    break
+        return textures
+
+    def _can_player_take_damage(self) -> bool:
+        return (not self.god_mode) and self.dodge_iframe_timer <= 0
+
+    def _update_dodge_timers(self, dt: float):
+        if self.dodge_timer > 0:
+            self.dodge_timer = max(0.0, self.dodge_timer - dt)
+        if self.dodge_iframe_timer > 0:
+            self.dodge_iframe_timer = max(0.0, self.dodge_iframe_timer - dt)
+
+    def _update_dodge_state(self, dt: float):
+        if self.dodge_timer <= 0:
+            return
+
+        dash_speed = self.dodge_distance / max(0.001, self.dodge_duration)
+        self.player.pos += self.dodge_direction * (dash_speed * dt)
+        self._clamp_player_to_bounds()
+
+        if self.dodge_direction.x != 0:
+            self.player.facing = 1 if self.dodge_direction.x > 0 else -1
+        if "run" in self.player.animations:
+            self.player.current_anim = "run"
+            run_frames = self.player.animations.get("run", [])
+            if run_frames:
+                self.player.current_frame = self.player.current_frame % len(run_frames)
+                self.player.frame_timer += dt
+                if self.player.frame_timer >= self.player.animation_speed:
+                    self.player.frame_timer = 0.0
+                    self.player.current_frame = (self.player.current_frame + 1) % len(run_frames)
+
     def _clamp_player_to_bounds(self):
         max_x = max(0, self.width - self.player.size[0])
         block_unit = self.height / 10.0
@@ -1549,12 +1677,10 @@ class GameWidget(Widget):
         payload["remaining"] = self._get_skill_cooldown(skill_id)
 
     def _use_skill_from_key(self, key: str):
-        slot_idx = self.skill_key_to_slot.get(key)
-        if slot_idx is None:
+        skill_id = self.skill_key_to_skill.get(key)
+        if skill_id is None:
             return
 
-        slot = self.skill_slots[slot_idx]
-        skill_id = slot["skill_id"]
         if not self._is_skill_ready(skill_id):
             return
 
@@ -1581,9 +1707,18 @@ class GameWidget(Widget):
         if move_vec.length() <= 0:
             move_vec = Vector(self.player.facing, 0)
 
-        dodge_dist = 170.0 + (self.player.agi * 5.0)
-        self.player.pos += move_vec.normalize() * dodge_dist
-        self._clamp_player_to_bounds()
+        self.dodge_direction = move_vec.normalize()
+        self.dodge_distance = 180.0 + (self.player.agi * 5.0)
+        self.dodge_timer = self.dodge_duration
+        self.dodge_iframe_timer = self.dodge_duration + 0.08
+
+        self.player.stop_shooting()
+        if "run" in self.player.animations:
+            self.player.current_anim = "run"
+            run_frames = self.player.animations.get("run", [])
+            if run_frames:
+                self.player.current_frame = self.player.current_frame % len(run_frames)
+            self.player.frame_timer = 0.0
         return True
 
     def _cast_grenade(self) -> bool:
@@ -1594,11 +1729,28 @@ class GameWidget(Widget):
 
         damage = 70.0 + (self.player.str * 5.0)
         blast_radius = 135.0 + (self.player.int * 4.0)
-        self.grenades.append(GrenadeEntity(start, target, damage=damage, blast_radius=blast_radius))
+        self.grenades.append(
+            GrenadeEntity(
+                start,
+                target,
+                damage=damage,
+                blast_radius=blast_radius,
+                textures=self.grenade_throw_textures,
+            )
+        )
         return True
 
     def _explode_grenade(self, grenade: GrenadeEntity):
         blast_center = grenade.pos
+
+        effect_size = max(120.0, grenade.blast_radius * 1.9)
+        self.explosion_effects.append(
+            ExplosionEffect(
+                blast_center,
+                textures=self.grenade_explosion_textures,
+                size=effect_size,
+            )
+        )
 
         for enemy in self.enemies[:]:
             if enemy.is_dying:
