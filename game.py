@@ -186,6 +186,11 @@ class GameWidget(Widget):
         self.explosion_effects: List[ExplosionEffect] = []
         self.exp_orbs: List[ExpOrb] = []
         self.exp_pickup_radius = 52.0
+
+        # Passive skills (always active for now)
+        self.passive_attack_speed_mult = 0.82  # lower fire interval -> faster attacks
+        self.passive_lifesteal = 0.04          # 4% of dealt damage returned as HP
+        self.passive_pickup_radius_mult = 1.5
         
         # Special enemy spawning (every 3 minutes, no max limit)
         self.special_enemies: List[SpecialEnemyEntity] = []
@@ -227,17 +232,19 @@ class GameWidget(Widget):
         self.skill_cooldowns: Dict[str, Dict[str, float]] = {
             "dodge": {"base": 2.2, "remaining": 0.0},
             "grenade": {"base": 6.5, "remaining": 0.0},
+            "shockwave": {"base": 8.0, "remaining": 0.0},
         }
         self.skill_slots = [
             {"key": "Q", "bind": "Q / 1 / 3", "skill_id": "dodge", "label": "Dodge"},
-            {"key": "E", "bind": "E / 2", "skill_id": "grenade", "label": "Grenade"},
+            {"key": "E", "bind": "E", "skill_id": "grenade", "label": "Grenade"},
+            {"key": "2", "bind": "2", "skill_id": "shockwave", "label": "Shockwave"},
         ]
         self.skill_key_to_skill = {
             "q": "dodge",
             "1": "dodge",
             "3": "dodge",
             "e": "grenade",
-            "2": "grenade",
+            "2": "shockwave",
         }
 
         # Level-up selection overlay
@@ -544,7 +551,7 @@ class GameWidget(Widget):
                 self.firing = False
                 self.burst_shots_remaining = 0
             elif getattr(self.player, 'ammo', 1) > 0:
-                if self.fire_timer >= self.fire_rate:
+                if self.fire_timer >= self._get_effective_fire_rate():
                     self.fire_timer = 0.0  # Reset cooldown explicitly to avoid rapid stack bursts
                     self._spawn_bullet()
                     if hasattr(self.player, 'consume_ammo'):
@@ -578,6 +585,7 @@ class GameWidget(Widget):
                 if self._rects_intersect(bullet_box, enemy.get_hitbox()):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
+                    self._apply_lifesteal(bullet_damage)
                     if enemy_died:
                         self.kill_count += 1
                         self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
@@ -591,6 +599,7 @@ class GameWidget(Widget):
                     if self._rects_intersect(bullet_box, se.get_hitbox()):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
+                        self._apply_lifesteal(bullet_damage)
                         if enemy_died:
                             self.kill_count += 1
                             self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
@@ -603,7 +612,7 @@ class GameWidget(Widget):
         # Update grenades and explode when timer completes
         for grenade in self.grenades[:]:
             grenade.update(dt)
-            if grenade.is_exploded():
+            if grenade.is_exploded() or self._grenade_hits_enemy(grenade):
                 self._explode_grenade(grenade)
                 self.grenades.remove(grenade)
 
@@ -639,7 +648,7 @@ class GameWidget(Widget):
 
         # Update exp orbs: pull toward player and collect on touch
         pull_radius = self._get_exp_pull_radius()
-        pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius)
+        pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius * self.passive_pickup_radius_mult)
         for orb in self.exp_orbs[:]:
             orb.update(dt, player_center, pull_radius)
             if self._rects_intersect(orb.get_hitbox(), pickup_box):
@@ -1273,6 +1282,11 @@ class GameWidget(Widget):
             font_size=int(12 * s), color=(0.4, 0.95, 0.5, 0.8)
         )
 
+        self._draw_outlined_text(
+            f"Passives: AS+ LS+ PR+", panel_x + pad, panel_y + panel_h - 90 * s,
+            font_size=int(10 * s), color=(0.75, 0.85, 0.95, 0.75)
+        )
+
     def _draw_skill_slots(self, s):
         """Draw centered bottom skill slots with cooldown overlay and countdown numbers."""
         slot_count = len(self.skill_slots)
@@ -1601,6 +1615,15 @@ class GameWidget(Widget):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
 
+    def _get_effective_fire_rate(self) -> float:
+        return max(0.045, self.fire_rate * self.passive_attack_speed_mult)
+
+    def _apply_lifesteal(self, damage_dealt: float):
+        if damage_dealt <= 0 or self.player.is_dead:
+            return
+        heal_amount = damage_dealt * self.passive_lifesteal
+        self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
+
     def _load_sequential_textures(self, base_path: str, prefix: str, max_frames: int = 20) -> List:
         textures = []
         for idx in range(1, max_frames + 1):
@@ -1689,6 +1712,8 @@ class GameWidget(Widget):
             used = self._cast_dodge()
         elif skill_id == "grenade":
             used = self._cast_grenade()
+        elif skill_id == "shockwave":
+            used = self._cast_shockwave()
 
         if used:
             self._start_skill_cooldown(skill_id)
@@ -1728,7 +1753,7 @@ class GameWidget(Widget):
         start = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
 
         damage = 70.0 + (self.player.str * 5.0)
-        blast_radius = 135.0 + (self.player.int * 4.0)
+        blast_radius = 220.0 + (self.player.int * 6.0)
         self.grenades.append(
             GrenadeEntity(
                 start,
@@ -1739,6 +1764,67 @@ class GameWidget(Widget):
             )
         )
         return True
+
+    def _cast_shockwave(self) -> bool:
+        center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
+        radius = 185.0 + (self.player.int * 6.0)
+        damage = 48.0 + (self.player.int * 4.0) + (self.player.str * 2.0)
+
+        self.explosion_effects.append(
+            ExplosionEffect(
+                center,
+                textures=self.grenade_explosion_textures,
+                size=max(170.0, radius * 1.8),
+            )
+        )
+
+        for enemy in self.enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - center).length() <= radius:
+                enemy_died = enemy.take_damage(damage)
+                self._apply_lifesteal(damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+
+        for enemy in self.special_enemies[:]:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - center).length() <= radius:
+                enemy_died = enemy.take_damage(damage)
+                self._apply_lifesteal(damage)
+                if enemy_died:
+                    self.kill_count += 1
+                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+
+        return True
+
+    def _grenade_hits_enemy(self, grenade: GrenadeEntity) -> bool:
+        hit_radius = max(24.0, grenade.size * 0.35)
+        gcenter = grenade.pos
+
+        for enemy in self.enemies:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+                return True
+
+        for enemy in self.special_enemies:
+            if enemy.is_dying:
+                continue
+            ebox = enemy.get_hitbox()
+            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+                return True
+
+        return False
 
     def _explode_grenade(self, grenade: GrenadeEntity):
         blast_center = grenade.pos
@@ -1758,7 +1844,9 @@ class GameWidget(Widget):
             ebox = enemy.get_hitbox()
             center = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
             if (center - blast_center).length() <= grenade.blast_radius:
-                if enemy.take_damage(grenade.damage):
+                enemy_died = enemy.take_damage(grenade.damage)
+                self._apply_lifesteal(grenade.damage)
+                if enemy_died:
                     self.kill_count += 1
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
 
@@ -1768,7 +1856,9 @@ class GameWidget(Widget):
             ebox = enemy.get_hitbox()
             center = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
             if (center - blast_center).length() <= grenade.blast_radius:
-                if enemy.take_damage(grenade.damage):
+                enemy_died = enemy.take_damage(grenade.damage)
+                self._apply_lifesteal(grenade.damage)
+                if enemy_died:
                     self.kill_count += 1
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
 
