@@ -215,6 +215,7 @@ class GameWidget(Widget):
         
         self.fire_timer = 0.0
         self.firing = False
+        self.left_mouse_held = False
         self.burst_shots_remaining = 0  # Support for semi/burst fire modes
 
         self.dodge_duration = 0.18
@@ -410,6 +411,8 @@ class GameWidget(Widget):
 
             if self.player.is_dead:
                 return True
+
+            self.left_mouse_held = True
             
             # Weapon firing / reloading logic
             if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
@@ -435,6 +438,7 @@ class GameWidget(Widget):
 
     def on_touch_up(self, touch):
         if touch.button == 'left':
+            self.left_mouse_held = False
             mode = getattr(self.player, 'firing_mode', 'AUTO')
             if mode == 'AUTO':
                 self.player.stop_shooting()
@@ -487,6 +491,8 @@ class GameWidget(Widget):
             self._draw_scene()
             self._update_debug(dt)
             return
+
+        self._resume_auto_fire_if_holding()
 
         # Keep player facing aligned with cursor while shooting
         if self.firing:
@@ -1614,6 +1620,29 @@ class GameWidget(Widget):
     def _sync_combat_from_player(self):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
+
+    def _resume_auto_fire_if_holding(self):
+        """Resume AUTO fire when reload finishes while left mouse is still held."""
+        if not self.left_mouse_held or self.levelup_active or self.player.is_dead:
+            return
+
+        mode = getattr(self.player, 'firing_mode', 'AUTO')
+        if mode != 'AUTO':
+            return
+
+        if self.firing:
+            return
+
+        if getattr(self.player, 'is_reloading', False):
+            return
+
+        if getattr(self.player, 'ammo', 0) <= 0:
+            if hasattr(self.player, 'start_reload'):
+                self.player.start_reload()
+            return
+
+        self.firing = True
+        self.player.start_shooting()
 
     def _get_effective_fire_rate(self) -> float:
         return max(0.045, self.fire_rate * self.passive_attack_speed_mult)
