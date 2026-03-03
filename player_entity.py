@@ -10,6 +10,7 @@ from entity_base import Entity
 
 class PlayerEntity(Entity):
     """Sprite-based player that supports idle/walk/run and a specific shot sequence."""
+    DESIGN_HEIGHT = 1080
 
     def __init__(self, pos: Vector, asset_path: str = "game_picture/player/Soldier_1"):
         self.asset_path = asset_path
@@ -25,7 +26,7 @@ class PlayerEntity(Entity):
         self._load_animation("recharge", "Recharge", 13)
 
         base_texture = self.animations["idle"][0]
-        target_height = Window.height / 3
+        target_height = self.DESIGN_HEIGHT / 3
         scale = target_height / base_texture.height
         width = base_texture.width * scale
         height = base_texture.height * scale
