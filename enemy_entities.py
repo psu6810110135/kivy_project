@@ -13,6 +13,7 @@ from projectile_entities import EnemyProjectileEntity
 
 class EnemyEntity(Entity):
     """Sprite-based enemy with idle/walk/attack/hurt/dead animations."""
+    DESIGN_HEIGHT = 1080
 
     _texture_cache: Dict[str, Dict[str, List]] = {}
     _bbox_cache: Dict[str, Dict[str, List[Tuple[float, float, float, float]]]] = {}
@@ -123,7 +124,7 @@ class EnemyEntity(Entity):
         if player_size:
             target_height = player_size[1] * scale_to_player
         else:
-            target_height = Window.height / 3
+            target_height = self.DESIGN_HEIGHT / 3
 
         scale = target_height / base_size[1]
         width = base_size[0] * scale
