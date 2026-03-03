@@ -360,6 +360,7 @@ class GameWidget(Widget):
         self.add_widget(self.progression_label)
 
         self.kill_count = 0
+        self.coins = 0
 
         self._sync_combat_from_player()
 
@@ -418,6 +419,9 @@ class GameWidget(Widget):
             "settings_checkbox_2": "game_picture/ui/Settings/Chebox 02.png",
             "settings_checkbox_3": "game_picture/ui/Settings/Checkbox 03.png",
             "settings_mark": "game_picture/ui/Settings/Mark.png",
+            "money_icon": "game_picture/ui/HUD/MONEY PANEL/Money Icon.png",
+            "money_panel_empty": "game_picture/ui/HUD/MONEY PANEL/Money Panel EMPTY HUD.png",
+            "money_panel": "game_picture/ui/HUD/MONEY PANEL/Money Panel HUD.png",
         }
         return {key: self._load_texture(path) for key, path in texture_paths.items()}
 
@@ -634,7 +638,7 @@ class GameWidget(Widget):
             if self.levelup_active:
                 s = self.height / 1080.0 if self.height > 0 else 1.0
                 panel_w = self.width * 0.55
-                panel_h = self.height * 0.52
+                panel_h = self.height * 1
                 panel_x = (self.width - panel_w) / 2
                 panel_y = (self.height - panel_h) / 2
                 
@@ -917,6 +921,7 @@ class GameWidget(Widget):
                     self._apply_lifesteal(bullet_damage)
                     if enemy_died:
                         self.kill_count += 1
+                        self.coins += 1
                         self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
                     hit = True
                     break
@@ -931,6 +936,7 @@ class GameWidget(Widget):
                         self._apply_lifesteal(bullet_damage)
                         if enemy_died:
                             self.kill_count += 1
+                            self.coins += 10
                             self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
                             self._drop_boss_orb(se)
                         hit = True
@@ -1490,26 +1496,26 @@ class GameWidget(Widget):
         with self.canvas:
             Color(0, 0, 0, 0.52)
             Rectangle(pos=(0, 0), size=self.size)
-            self._draw_texture_centered(self.ui_textures.get("pause_bg"), self.width * 0.5, self.height * 0.5, 0.86 * s, 0.94)
-            panel_rect = self._draw_texture_centered(self.ui_textures.get("pause_preset"), self.width * 0.5, self.height * 0.53, 0.86 * s)
+            self._draw_texture_centered(self.ui_textures.get("pause_bg"), self.width * 0.5, self.height * 0.5, 1.12 * s, 0.94)
+            panel_rect = self._draw_texture_centered(self.ui_textures.get("pause_preset"), self.width * 0.5, self.height * 0.5, 1.28 * s)
             if panel_rect is None:
-                panel_rect = (self.width * 0.28, self.height * 0.2, self.width * 0.44, self.height * 0.58)
+                panel_rect = (self.width * 0.2, self.height * 0.14, self.width * 0.6, self.height * 0.72)
 
-            self._draw_texture_centered(self.ui_textures.get("pause_title"), self.width * 0.5, self.height * 0.73, 0.64 * s)
-            self._draw_texture_centered(self.ui_textures.get("pause_line"), self.width * 0.5, self.height * 0.665, 0.72 * s, 0.7)
+            title_y = panel_rect[1] + panel_rect[3] * 0.84
+            self._draw_texture_centered(self.ui_textures.get("pause_line"), self.width * 0.5, title_y - 48 * s, 1.25 * s, 0.7)
 
             if draw_buttons:
                 for action, texture, y in [
-                    ("resume", self.ui_textures.get("pause_btn_back"), self.height * 0.56),
-                    ("settings", self.ui_textures.get("pause_btn_settings"), self.height * 0.47),
-                    ("menu", self.ui_textures.get("pause_btn_menu"), self.height * 0.38),
+                    ("resume", self.ui_textures.get("pause_btn_back"), panel_rect[1] + panel_rect[3] * 0.60),
+                    ("settings", self.ui_textures.get("pause_btn_settings"), panel_rect[1] + panel_rect[3] * 0.42),
+                    ("menu", self.ui_textures.get("pause_btn_menu"), panel_rect[1] + panel_rect[3] * 0.24),
                 ]:
-                    fallback = (self.width * 0.5 - 170 * s, y - 40 * s, 340 * s, 80 * s)
-                    rect = self._draw_texture_centered(texture, self.width * 0.5, y, 0.66 * s) or fallback
+                    fallback = (self.width * 0.5 - 210 * s, y - 54 * s, 420 * s, 108 * s)
+                    rect = self._draw_texture_centered(texture, self.width * 0.5, y, 1.36 * s) or fallback
                     self.pause_buttons.append({"action": action, "rect": rect})
 
-            self._draw_texture_centered(self.ui_textures.get("pause_star"), panel_rect[0] + panel_rect[2] * 0.2, panel_rect[1] + panel_rect[3] * 0.18, 0.45 * s, 0.78)
-            self._draw_texture_centered(self.ui_textures.get("pause_star"), panel_rect[0] + panel_rect[2] * 0.8, panel_rect[1] + panel_rect[3] * 0.18, 0.45 * s, 0.78)
+            self._draw_texture_centered(self.ui_textures.get("pause_star"), panel_rect[0] + panel_rect[2] * 0.2, panel_rect[1] + panel_rect[3] * 0.14, 0.62 * s, 0.78)
+            self._draw_texture_centered(self.ui_textures.get("pause_star"), panel_rect[0] + panel_rect[2] * 0.8, panel_rect[1] + panel_rect[3] * 0.14, 0.62 * s, 0.78)
 
     def _draw_defeated_overlay(self):
         self.defeated_buttons = []
@@ -1520,27 +1526,45 @@ class GameWidget(Widget):
             self._draw_texture_centered(self.ui_textures.get("defeat_bg"), self.width * 0.5, self.height * 0.5, 1.25 * s)
 
             panel_w = self.width * 0.62
-            panel_h = self.height * 0.54
+            panel_h = self.height * 0.62
             panel_x = (self.width - panel_w) / 2
-            panel_y = self.height * 0.17
+            panel_y = self.height * 0.12
             Color(1, 1, 1, 1)
             Rectangle(texture=self.ui_textures.get("defeat_preset"), pos=(panel_x, panel_y), size=(panel_w, panel_h))
 
-            self._draw_outlined_text("MISSION FAILED", self.width * 0.5, panel_y + panel_h + 90 * s, font_size=int(82 * s), color=(1, 0.2, 0.2, 1), anchor_x='center', anchor_y='center', bold=True)
+            # Title
+            self._draw_outlined_text("MISSION FAILED", self.width * 0.5, panel_y + panel_h - 92 * s, font_size=int(62 * s), color=(1, 0.2, 0.2, 1), anchor_x='center', anchor_y='center', bold=True)
+
+            # Stats
             self._draw_outlined_text(
                 f"Kills: {self.kill_count}   Level: {self.player.level}   Time: {self._format_time(self.game_time)}",
                 self.width * 0.5,
-                panel_y + panel_h - 78 * s,
+                panel_y + panel_h - 150 * s,
                 font_size=int(42 * s),
                 color=(0.95, 0.95, 0.96, 0.98),
                 anchor_x='center',
                 anchor_y='center'
             )
 
-            retry_fallback = (self.width * 0.5 - 220 * s, panel_y + 120 * s, 440 * s, 96 * s)
-            menu_fallback = (self.width * 0.5 - 220 * s, panel_y + 20 * s, 440 * s, 96 * s)
-            retry_rect = self._draw_texture_centered(self.ui_textures.get("defeat_btn_retry"), self.width * 0.5, panel_y + 168 * s, 1.04 * s) or retry_fallback
-            menu_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_menu") or self.ui_textures.get("pause_btn_menu"), self.width * 0.5, panel_y + 62 * s, 1.0 * s) or menu_fallback
+            # Coin display — use defeat preset's built-in coin bar and draw only the number
+            coin_y = panel_y + panel_h * 0.48
+            self._draw_outlined_text(
+                f"{int(self.coins)}",
+                self.width * 0.5,
+                coin_y,
+                font_size=int(44 * s),
+                color=(1, 0.88, 0.2, 1),
+                anchor_x='center',
+                anchor_y='center',
+                bold=True,
+            )
+
+            # Buttons — large and centered
+            btn_scale = 2.25 * s
+            retry_fallback = (self.width * 0.5 - 190 * s, panel_y + 130 * s, 380 * s, 106 * s)
+            menu_fallback = (self.width * 0.5 - 190 * s, panel_y + 18 * s, 380 * s, 106 * s)
+            retry_rect = self._draw_texture_centered(self.ui_textures.get("defeat_btn_retry"), self.width * 0.5, panel_y + 188 * s, btn_scale) or retry_fallback
+            menu_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_menu") or self.ui_textures.get("pause_btn_menu"), self.width * 0.5, panel_y + 72 * s, btn_scale) or menu_fallback
             self.defeated_buttons.append({"action": "retry", "rect": retry_rect})
             self.defeated_buttons.append({"action": "menu", "rect": menu_rect})
 
@@ -1552,30 +1576,56 @@ class GameWidget(Widget):
         with self.canvas:
             Color(0, 0, 0, 0.65)
             Rectangle(pos=(0, 0), size=self.size)
+
+            # Panel — sized to fill nicely
             panel_w = self.width * 0.62
-            panel_h = self.height * 0.56
+            panel_h = self.height * 0.68
             panel_x = (self.width - panel_w) / 2
-            panel_y = self.height * 0.16
+            panel_y = self.height * 0.10
             Color(1, 1, 1, 1)
             Rectangle(texture=self.ui_textures.get("victory_preset"), pos=(panel_x, panel_y), size=(panel_w, panel_h))
 
-            self._draw_outlined_text("VICTORY", self.width * 0.5, panel_y + panel_h + 86 * s, font_size=int(94 * s), color=(1, 0.84, 0.08, 1), anchor_x='center', anchor_y='center', bold=True)
+            # Stars below the panel's built-in "VICTORY" header
+            star_y = panel_y + panel_h - 160 * s
             for idx in range(stars):
-                self._draw_texture_centered(self.ui_textures.get("victory_star"), self.width * 0.5 + (idx - (stars - 1) / 2) * 110 * s, panel_y + panel_h - 112 * s, 0.6 * s)
+                self._draw_texture_centered(self.ui_textures.get("victory_star"), self.width * 0.5 + (idx - (stars - 1) / 2) * 110 * s, star_y, 0.7 * s)
+
+            # Stats text
             self._draw_outlined_text(
                 f"Survived: {self._format_time(self.game_time)}   Kills: {self.kill_count}   Level: {self.player.level}",
                 self.width * 0.5,
-                panel_y + panel_h - 210 * s,
-                font_size=int(46 * s),
+                star_y - 100 * s,
+                font_size=int(42 * s),
                 color=(0.95, 0.95, 1, 0.98),
                 anchor_x='center',
                 anchor_y='center'
             )
 
-            retry_fallback = (self.width * 0.5 - 240 * s, panel_y + 120 * s, 220 * s, 90 * s)
-            menu_fallback = (self.width * 0.5 + 20 * s, panel_y + 120 * s, 220 * s, 90 * s)
-            retry_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_ok"), self.width * 0.44, panel_y + 162 * s, 1.0 * s) or retry_fallback
-            menu_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_menu"), self.width * 0.56, panel_y + 162 * s, 1.0 * s) or menu_fallback
+            # Separator line
+            line_y = star_y - 160 * s
+            Color(0.6, 0.58, 0.5, 0.4)
+            Rectangle(pos=(panel_x + 40 * s, line_y), size=(panel_w - 80 * s, 2 * s))
+
+            # Coin display — use preset's built-in coin bar/icon, draw only the number
+            coin_y = panel_y + panel_h * 0.335
+            self._draw_outlined_text(
+                f"{int(self.coins)}",
+                self.width * 0.5,
+                coin_y,
+                font_size=int(52 * s),
+                color=(1, 0.88, 0.2, 1),
+                anchor_x='center',
+                anchor_y='center',
+                bold=True,
+            )
+
+            # Buttons — side by side, large
+            btn_scale = 2.1 * s
+            btn_y = panel_y + 70 * s
+            retry_fallback = (self.width * 0.5 - 260 * s, btn_y - 50 * s, 220 * s, 100 * s)
+            menu_fallback = (self.width * 0.5 + 40 * s, btn_y - 50 * s, 220 * s, 100 * s)
+            retry_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_ok"), self.width * 0.38, btn_y, btn_scale) or retry_fallback
+            menu_rect = self._draw_texture_centered(self.ui_textures.get("victory_btn_menu"), self.width * 0.62, btn_y, btn_scale) or menu_fallback
             self.victory_buttons.append({"action": "retry", "rect": retry_rect})
             self.victory_buttons.append({"action": "menu", "rect": menu_rect})
 
@@ -1587,15 +1637,15 @@ class GameWidget(Widget):
             Color(0, 0, 0, 0.5)
             Rectangle(pos=(0, 0), size=self.size)
 
-            panel_w = self.width * 0.74
-            panel_h = self.height * 0.72
+            panel_w = self.width * 0.78
+            panel_h = self.height * 0.76
             px = (self.width - panel_w) / 2
             py = (self.height - panel_h) / 2
             Color(1, 1, 1, 1)
             Rectangle(texture=self.ui_textures.get("settings_bg"), pos=(px, py), size=(panel_w, panel_h))
             pw, ph = panel_w, panel_h
 
-            self._draw_outlined_text("SETTINGS", px + pw * 0.5, py + ph * 0.88, font_size=int(64 * s), color=(0.95, 0.95, 0.98, 1), anchor_x='center', anchor_y='center', bold=True)
+            self._draw_outlined_text("SETTINGS", px + pw * 0.5, py + ph * 0.88, font_size=int(68 * s), color=(0.95, 0.95, 0.98, 1), anchor_x='center', anchor_y='center', bold=True)
 
             bar_bg_texture = self.ui_textures.get("settings_bar_bg")
             bar_fill_texture = self.ui_textures.get("settings_bar_fill")
@@ -1603,47 +1653,47 @@ class GameWidget(Widget):
                 ("music_volume", "Music Volume", py + ph * 0.64),
                 ("sfx_volume", "SFX Volume", py + ph * 0.48),
             ]:
-                self._draw_texture_centered(self.ui_textures.get("settings_desc"), px + pw * 0.24, y, 0.72 * s, 0.95)
-                self._draw_outlined_text(label, px + pw * 0.24, y, font_size=int(42 * s), color=(0.94, 0.94, 0.97, 1), anchor_x='center', anchor_y='center', bold=True)
+                self._draw_texture_centered(self.ui_textures.get("settings_desc"), px + pw * 0.25, y, 0.95 * s, 0.95)
+                self._draw_outlined_text(label, px + pw * 0.25, y, font_size=int(50 * s), color=(0.94, 0.94, 0.97, 1), anchor_x='center', anchor_y='center', bold=True)
 
-                bg_rect = self._draw_texture_centered(bar_bg_texture, px + pw * 0.67, y, 1.12 * s)
-                if bg_rect is not None:
-                    bx, by, bw, bh = bg_rect
+                bw = pw * 0.44
+                bh = max(26 * s, ph * 0.058)
+                bx = px + pw * 0.47
+                by = y - bh * 0.5
+
+                if bar_bg_texture is not None:
+                    self._draw_texture_fill_width(bar_bg_texture, bx, by, bw, bh)
                 else:
-                    bw = pw * 0.50
-                    bh = ph * 0.08
-                    bx = px + pw * 0.42
-                    by = y - bh * 0.5
                     Color(0.2, 0.2, 0.25, 0.9)
                     RoundedRectangle(pos=(bx, by), size=(bw, bh), radius=[8 * s])
 
                 self._draw_texture_fill_width(bar_fill_texture, bx, by, bw * max(0.0, min(1.0, self.settings[key])), bh)
                 self.settings_sliders[key] = (bx, by, bw, bh)
 
-            checkbox = self._draw_texture_centered(
-                self.ui_textures.get("settings_checkbox_1") or self.ui_textures.get("settings_checkbox_2"),
-                px + pw * 0.50,
-                py + ph * 0.30,
-                0.88 * s,
-            )
-            if checkbox is None:
-                checkbox = (px + pw * 0.50 - 24 * s, py + ph * 0.30 - 24 * s, 48 * s, 48 * s)
-                Color(0.2, 0.2, 0.25, 0.95)
-                RoundedRectangle(pos=(checkbox[0], checkbox[1]), size=(checkbox[2], checkbox[3]), radius=[6 * s])
+            # Fullscreen toggle (custom square for consistent size and visibility)
+            toggle_size = 52 * s
+            toggle_cx = px + pw * 0.50
+            toggle_cy = py + ph * 0.30
+            checkbox = (toggle_cx - toggle_size * 0.5, toggle_cy - toggle_size * 0.5, toggle_size, toggle_size)
+
+            Color(0.12, 0.1, 0.06, 0.95)
+            RoundedRectangle(pos=(checkbox[0], checkbox[1]), size=(checkbox[2], checkbox[3]), radius=[6 * s])
+            Color(0.78, 0.62, 0.2, 0.95)
+            Line(rounded_rectangle=(checkbox[0], checkbox[1], checkbox[2], checkbox[3], 6 * s), width=max(1.5, 2 * s))
 
             if self.settings["fullscreen"]:
                 mark_tex = self.ui_textures.get("settings_mark")
                 if mark_tex is not None:
-                    self._draw_texture_centered(mark_tex, px + pw * 0.50, py + ph * 0.30, 0.68 * s)
+                    self._draw_texture_centered(mark_tex, toggle_cx, toggle_cy, 0.82 * s)
                 else:
                     Color(0.2, 0.9, 0.2, 1)
-                    Line(points=[checkbox[0] + 7 * s, checkbox[1] + 19 * s, checkbox[0] + 16 * s, checkbox[1] + 9 * s, checkbox[0] + 29 * s, checkbox[1] + 27 * s], width=2)
+                    Line(points=[checkbox[0] + 12 * s, checkbox[1] + 25 * s, checkbox[0] + 22 * s, checkbox[1] + 13 * s, checkbox[0] + 40 * s, checkbox[1] + 37 * s], width=max(1.5, 2 * s))
 
-            self._draw_outlined_text("Fullscreen", px + pw * 0.56, py + ph * 0.30, font_size=int(40 * s), color=(0.94, 0.94, 0.97, 1), anchor_x='left', anchor_y='center', bold=True)
+            self._draw_outlined_text("Fullscreen", px + pw * 0.58, toggle_cy, font_size=int(46 * s), color=(0.94, 0.94, 0.97, 1), anchor_x='left', anchor_y='center', bold=True)
             self.settings_sliders["fullscreen_toggle"] = checkbox
 
-            ok_fallback = (px + pw * 0.5 - 160 * s, py + ph * 0.12 - 42 * s, 320 * s, 84 * s)
-            ok_rect = self._draw_texture_centered(self.ui_textures.get("settings_btn_ok"), px + pw * 0.5, py + ph * 0.12, 1.0 * s) or ok_fallback
+            ok_fallback = (px + pw * 0.5 - 170 * s, py + ph * 0.12 - 45 * s, 340 * s, 90 * s)
+            ok_rect = self._draw_texture_centered(self.ui_textures.get("settings_btn_ok"), px + pw * 0.5, py + ph * 0.12, 1.26 * s) or ok_fallback
             self.settings_buttons.append({"action": "ok", "rect": ok_rect})
 
     def _handle_settings_touch(self, x: float, y: float) -> bool:
@@ -1807,6 +1857,24 @@ class GameWidget(Widget):
             stats_text, bar_x, stats_y,
             font_size=int(12 * s), color=(0.72, 0.72, 0.82, 0.85)
         )
+
+        # ── Coin counter (below HUD panel) ──
+        coin_y = panel_y - 12 * s
+        money_icon_tex = self.ui_textures.get("money_icon")
+        if money_icon_tex:
+            icon_sz = 28 * s
+            Color(1, 1, 1, 1)
+            Rectangle(texture=money_icon_tex, pos=(panel_x + pad, coin_y - icon_sz), size=(icon_sz, icon_sz))
+            self._draw_outlined_text(
+                f"{self.coins}", panel_x + pad + icon_sz + 6 * s, coin_y - icon_sz * 0.5,
+                font_size=int(18 * s), color=(1, 0.88, 0.2, 1),
+                anchor_y='center', bold=True
+            )
+        else:
+            self._draw_outlined_text(
+                f"Coins: {self.coins}", panel_x + pad, coin_y - 14 * s,
+                font_size=int(14 * s), color=(1, 0.88, 0.2, 1), bold=True
+            )
 
         # ── Combat info line ──
         combat_y = stats_y - 18 * s
@@ -2548,6 +2616,7 @@ class GameWidget(Widget):
                 self._apply_lifesteal(damage)
                 if enemy_died:
                     self.kill_count += 1
+                    self.coins += 1
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
 
         for enemy in self.special_enemies[:]:
@@ -2560,6 +2629,7 @@ class GameWidget(Widget):
                 self._apply_lifesteal(damage)
                 if enemy_died:
                     self.kill_count += 1
+                    self.coins += 10
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
                     self._drop_boss_orb(enemy)
 
@@ -2609,6 +2679,7 @@ class GameWidget(Widget):
                 self._apply_lifesteal(grenade.damage)
                 if enemy_died:
                     self.kill_count += 1
+                    self.coins += 1
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
 
         for enemy in self.special_enemies[:]:
@@ -2621,6 +2692,7 @@ class GameWidget(Widget):
                 self._apply_lifesteal(grenade.damage)
                 if enemy_died:
                     self.kill_count += 1
+                    self.coins += 10
                     self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
                     self._drop_boss_orb(enemy)
 
