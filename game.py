@@ -138,12 +138,15 @@ class GrenadeEntity:
         damage: float,
         blast_radius: float,
         textures: List = None,
+        visual_scale: float = 1.0,
         min_contact_time: float = 0.20,
         fuse_min_time: float = 0.35,
         fuse_max_time: float = 1.15,
         fuse_offset: float = 0.06,
     ):
-        self.size = 56.0
+        self.base_size = 56.0
+        self.size = self.base_size * max(0.5, visual_scale)
+        self.hitbox_size = self.base_size * 0.56
         self.pos = Vector(start_pos.x, start_pos.y)
         self.target_pos = Vector(target_pos.x, target_pos.y)
         self.damage = damage
@@ -183,8 +186,8 @@ class GrenadeEntity:
                 self.pos += self.velocity * dt
 
     def get_hitbox(self):
-        half = self.size * 0.28
-        return (self.pos.x - half, self.pos.y - half, half * 2, half * 2)
+        half = self.hitbox_size / 2
+        return (self.pos.x - half, self.pos.y - half, self.hitbox_size, self.hitbox_size)
 
     def is_exploded(self) -> bool:
         return self.time_left <= 0
@@ -216,10 +219,11 @@ class GrenadeEntity:
 class ExplosionEffect:
     """Visual explosion animation effect spawned when grenade detonates."""
 
-    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0):
+    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0, y_lift_ratio: float = 0.0):
         self.pos = Vector(pos.x, pos.y)
         self.textures = textures or []
         self.size = size
+        self.y_lift_ratio = y_lift_ratio
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.05
@@ -245,18 +249,19 @@ class ExplosionEffect:
     def draw(self, canvas):
         if self.done:
             return
+        draw_center = Vector(self.pos.x, self.pos.y + self.size * self.y_lift_ratio)
         with canvas:
             if self.textures:
                 tex = self.textures[min(self.current_frame, len(self.textures) - 1)]
                 Color(1, 1, 1, 0.95)
                 Rectangle(
                     texture=tex,
-                    pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2),
+                    pos=(draw_center.x - self.size / 2, draw_center.y - self.size / 2),
                     size=(self.size, self.size),
                 )
             else:
                 Color(1, 0.45, 0.2, 0.55)
-                Ellipse(pos=(self.pos.x - self.size / 2, self.pos.y - self.size / 2), size=(self.size, self.size))
+                Ellipse(pos=(draw_center.x - self.size / 2, draw_center.y - self.size / 2), size=(self.size, self.size))
 
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
@@ -303,6 +308,8 @@ class GameWidget(Widget):
         self.grenade_damage_str_scale = 5.0
         self.grenade_radius_base = 220.0
         self.grenade_radius_int_scale = 6.0
+        self.grenade_visual_scale = 1.4
+        self.grenade_explosion_visual_scale = 1.4
         self.grenade_fuse_min_time = 0.35
         self.grenade_fuse_max_time = 1.15
         self.grenade_fuse_offset = 0.06
@@ -385,6 +392,10 @@ class GameWidget(Widget):
             "grenade": {"base": 6.5, "remaining": 0.0},
             "shockwave": {"base": 8.0, "remaining": 0.0},
         }
+        self.ultimate_kills_required = 20
+        self.ultimate_kill_progress = 0
+        self.ultimate_infinite_ammo_duration = 15.0
+        self.ultimate_infinite_ammo_timer = 0.0
         self.balance_preset_order = ["conservative", "balanced", "generous"]
         self.balance_presets = self._build_balance_presets()
         self.auto_balance_progression = True
@@ -395,16 +406,14 @@ class GameWidget(Widget):
         self._apply_balance_preset(self.balance_preset_name)
 
         self.skill_slots = [
-            {"key": "Q", "bind": "Q / 1 / 3", "skill_id": "dodge", "label": "Dodge"},
+            {"key": "Q", "bind": "Q", "skill_id": "dodge", "label": "Dash"},
             {"key": "E", "bind": "E", "skill_id": "grenade", "label": "Grenade"},
-            {"key": "2", "bind": "2", "skill_id": "shockwave", "label": "Shockwave"},
+            {"key": "1", "bind": "1", "skill_id": "shockwave", "label": "Ultimate"},
         ]
         self.skill_key_to_skill = {
             "q": "dodge",
-            "1": "dodge",
-            "3": "dodge",
             "e": "grenade",
-            "2": "shockwave",
+            "1": "shockwave",
         }
 
         # Level-up selection overlay
@@ -755,7 +764,7 @@ class GameWidget(Widget):
             self._spawn_enemy()
             return True
 
-        if self.debug_mode and key == '1':
+        if self.debug_mode and key == '4':
             # Spawn Gorgon (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Gorgon")
             return True
@@ -905,7 +914,11 @@ class GameWidget(Widget):
             self.left_mouse_held = True
             
             # Weapon firing / reloading logic
-            if not getattr(self.player, 'is_reloading', False) and getattr(self.player, 'ammo', 1) > 0:
+            has_infinite_ammo = self._has_ultimate_infinite_ammo()
+            can_fire_now = (not getattr(self.player, 'is_reloading', False)) or has_infinite_ammo
+            has_ammo_now = getattr(self.player, 'ammo', 1) > 0
+
+            if can_fire_now and (has_ammo_now or has_infinite_ammo):
                 mode = getattr(self.player, 'firing_mode', 'AUTO')
                 if mode == 'AUTO':
                     self.firing = True
@@ -920,7 +933,7 @@ class GameWidget(Widget):
                         self.burst_shots_remaining = 1
                         self.firing = True
                         self.player.start_shooting()
-            elif getattr(self.player, 'ammo', 0) <= 0:
+            elif not has_infinite_ammo and getattr(self.player, 'ammo', 0) <= 0:
                 if hasattr(self.player, 'start_reload'):
                     self.player.start_reload()
             return True
@@ -989,6 +1002,8 @@ class GameWidget(Widget):
 
         self._update_skill_cooldowns(dt)
         self._update_dodge_timers(dt)
+        if self.ultimate_infinite_ammo_timer > 0:
+            self.ultimate_infinite_ammo_timer = max(0.0, self.ultimate_infinite_ammo_timer - dt)
 
         # Update game time (stop at max duration)
         if self.game_time < self.GAME_DURATION:
@@ -1099,15 +1114,16 @@ class GameWidget(Widget):
 
         # Handle shooting execution
         if self.firing and not self.player.is_dead:
-            if getattr(self.player, 'is_reloading', False):
+            has_infinite_ammo = self._has_ultimate_infinite_ammo()
+            if getattr(self.player, 'is_reloading', False) and not has_infinite_ammo:
                 self.player.stop_shooting()
                 self.firing = False
                 self.burst_shots_remaining = 0
-            elif getattr(self.player, 'ammo', 1) > 0:
+            elif has_infinite_ammo or getattr(self.player, 'ammo', 1) > 0:
                 if self.fire_timer >= self._get_effective_fire_rate():
                     self.fire_timer = 0.0  # Reset cooldown explicitly to avoid rapid stack bursts
                     self._spawn_bullet()
-                    if hasattr(self.player, 'consume_ammo'):
+                    if not has_infinite_ammo and hasattr(self.player, 'consume_ammo'):
                         self.player.consume_ammo()
 
                     mode = getattr(self.player, 'firing_mode', 'AUTO')
@@ -1966,8 +1982,12 @@ class GameWidget(Widget):
         max_ammo = getattr(self.player, 'max_ammo', 30)
         is_reloading = getattr(self.player, 'is_reloading', False)
         reload_timer = getattr(self.player, 'reload_timer', 0.0)
+        has_infinite_ammo = self._has_ultimate_infinite_ammo()
 
-        if is_reloading:
+        if has_infinite_ammo:
+            ammo_text = f"Ammo: ∞  ({self.ultimate_infinite_ammo_timer:.1f}s)"
+            ammo_color = (0.45, 0.95, 1.0, 1)
+        elif is_reloading:
             ammo_text = f"RELOADING... {reload_timer:.1f}s"
             ammo_color = (0.9, 0.8, 0.2, 1)
         else:
@@ -2246,8 +2266,12 @@ class GameWidget(Widget):
                 overlay_h = slot_h * ratio
                 Color(0.02, 0.03, 0.05, 0.72)
                 Rectangle(pos=(x, y), size=(slot_w, overlay_h))
+                if skill_id == "shockwave":
+                    display_text = f"{int(math.ceil(remaining))}K"
+                else:
+                    display_text = f"{remaining:.1f}"
                 self._draw_outlined_text(
-                    f"{remaining:.1f}", x + slot_w / 2, y + slot_h / 2,
+                    display_text, x + slot_w / 2, y + slot_h / 2,
                     font_size=int(22 * s), color=(1, 0.95, 0.95, 0.95),
                     anchor_x='center', anchor_y='center', bold=True
                 )
@@ -2282,6 +2306,8 @@ class GameWidget(Widget):
                 f"\nEXP Pull Radius: {self._get_exp_pull_radius():.0f}"
                 f"\nPlayer LV:{self.player.level} EXP:{int(self.player.exp)}/{int(self.player.next_exp)} SP:{self.player.stat_points}"
                 f"\nPlayer HP:{self.player.hp:.0f}/{self.player.max_hp:.0f} Ammo:{getattr(self.player, 'ammo', 0)}/{getattr(self.player, 'max_ammo', 30)} DMG:{self.player.bullet_damage:.1f}"
+                f"\nULT Infinite Ammo: {self.ultimate_infinite_ammo_timer:.1f}s"
+                f"\nUltimate Charge: {self.ultimate_kill_progress}/{self.ultimate_kills_required} kills"
                 f"\nStats STR:{self.player.str} DEX:{self.player.dex} AGI:{self.player.agi} INT:{self.player.int} VIT:{self.player.vit} LUCK:{self.player.luck}"
                 f"\nStatus Effects: {status_text}"
             )
@@ -2371,6 +2397,7 @@ class GameWidget(Widget):
 
     def _handle_enemy_kill(self, enemy):
         self.kill_count += 1
+        self._add_ultimate_kill_progress(1)
 
         if isinstance(enemy, SpecialEnemyEntity):
             self.coins += 10
@@ -2656,10 +2683,12 @@ class GameWidget(Widget):
         if self.firing:
             return
 
-        if getattr(self.player, 'is_reloading', False):
+        has_infinite_ammo = self._has_ultimate_infinite_ammo()
+
+        if getattr(self.player, 'is_reloading', False) and not has_infinite_ammo:
             return
 
-        if getattr(self.player, 'ammo', 0) <= 0:
+        if getattr(self.player, 'ammo', 0) <= 0 and not has_infinite_ammo:
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
             return
@@ -2726,26 +2755,54 @@ class GameWidget(Widget):
         self.player.pos.y = max(min_y, min(self.player.pos.y, max(min_y, max_y)))
 
     def _update_skill_cooldowns(self, dt: float):
-        for payload in self.skill_cooldowns.values():
+        for skill_id, payload in self.skill_cooldowns.items():
+            if skill_id == "shockwave":
+                continue
             if payload["remaining"] > 0:
                 payload["remaining"] = max(0.0, payload["remaining"] - dt)
 
+    def _add_ultimate_kill_progress(self, amount: int = 1):
+        if amount <= 0:
+            return
+        self.ultimate_kill_progress = min(
+            self.ultimate_kills_required,
+            self.ultimate_kill_progress + amount,
+        )
+
+    def _get_ultimate_kills_remaining(self) -> int:
+        return max(0, self.ultimate_kills_required - self.ultimate_kill_progress)
+
+    def _is_ultimate_ready(self) -> bool:
+        return self._get_ultimate_kills_remaining() <= 0
+
+    def _has_ultimate_infinite_ammo(self) -> bool:
+        return self.ultimate_infinite_ammo_timer > 0.0
+
     def _get_skill_cooldown(self, skill_id: str) -> float:
+        if skill_id == "shockwave":
+            return float(max(1, self.ultimate_kills_required))
         payload = self.skill_cooldowns.get(skill_id)
         if payload is None:
             return 0.0
         return payload["base"] * self.player.skill_cooldown_multiplier * self.boss_skill_cdr_mult
 
     def _get_skill_remaining(self, skill_id: str) -> float:
+        if skill_id == "shockwave":
+            return float(self._get_ultimate_kills_remaining())
         payload = self.skill_cooldowns.get(skill_id)
         if payload is None:
             return 0.0
         return payload["remaining"]
 
     def _is_skill_ready(self, skill_id: str) -> bool:
+        if skill_id == "shockwave":
+            return self._is_ultimate_ready()
         return self._get_skill_remaining(skill_id) <= 0.0
 
     def _start_skill_cooldown(self, skill_id: str):
+        if skill_id == "shockwave":
+            self.ultimate_kill_progress = 0
+            return
         payload = self.skill_cooldowns.get(skill_id)
         if payload is None:
             return
@@ -2813,6 +2870,7 @@ class GameWidget(Widget):
                 damage=damage,
                 blast_radius=blast_radius,
                 textures=self.grenade_throw_textures,
+                visual_scale=self.grenade_visual_scale,
                 min_contact_time=self.grenade_contact_arm_time,
                 fuse_min_time=self.grenade_fuse_min_time,
                 fuse_max_time=self.grenade_fuse_max_time,
@@ -2862,38 +2920,21 @@ class GameWidget(Widget):
 
     def _cast_shockwave(self) -> bool:
         center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
-        radius = 185.0 + (self.player.int * 6.0)
-        damage = 48.0 + (self.player.int * 4.0) + (self.player.str * 2.0)
+        visual_radius = 185.0 + (self.player.int * 6.0)
+
+        self.ultimate_infinite_ammo_timer = self.ultimate_infinite_ammo_duration
+        self.player.is_reloading = False
+        self.player.reload_timer = 0.0
+        self.player.ammo = self.player.max_ammo
 
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
                 textures=self.grenade_explosion_textures,
-                size=max(170.0, radius * 1.8),
+                size=max(170.0, visual_radius * 1.8),
+                y_lift_ratio=0.45,
             )
         )
-
-        for enemy in self.enemies[:]:
-            if enemy.is_dying:
-                continue
-            ebox = enemy.get_hitbox()
-            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
-            if (ecenter - center).length() <= radius:
-                enemy_died = enemy.take_damage(damage)
-                self._apply_lifesteal(damage)
-                if enemy_died:
-                    self._handle_enemy_kill(enemy)
-
-        for enemy in self.special_enemies[:]:
-            if enemy.is_dying:
-                continue
-            ebox = enemy.get_hitbox()
-            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
-            if (ecenter - center).length() <= radius:
-                enemy_died = enemy.take_damage(damage)
-                self._apply_lifesteal(damage)
-                if enemy_died:
-                    self._handle_enemy_kill(enemy)
 
         return True
 
@@ -2919,12 +2960,13 @@ class GameWidget(Widget):
     def _explode_grenade(self, grenade: GrenadeEntity):
         blast_center = grenade.pos
 
-        effect_size = max(120.0, grenade.blast_radius * 1.9)
+        effect_size = max(120.0, grenade.blast_radius * 1.9) * self.grenade_explosion_visual_scale
         self.explosion_effects.append(
             ExplosionEffect(
                 blast_center,
                 textures=self.grenade_explosion_textures,
                 size=effect_size,
+                y_lift_ratio=0.45,
             )
         )
 
