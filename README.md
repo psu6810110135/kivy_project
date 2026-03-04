@@ -50,9 +50,21 @@
 #### Debug / Testing Helpers
 
 - [x] Debug mode (`9`) + hitbox/path/FPS
-- [x] Spawn ศัตรู debug (`+`, `1`, `2`, `3`)
+- [x] Spawn ศัตรู debug (`+`, `5`, `6`, `7`)
 - [x] Time speed debug cycle (`-`)
+- [x] Auto balance progression: Balanced → Conservative ตามเวลาเกม
+- [x] Balance preset debug cycle (`0`) — manual override เป็น Conservative / Balanced / Generous
 - [x] God mode (`8`)
+
+#### Skill / Combat Controls
+
+- [x] Dash ใช้ปุ่ม `Q`
+- [x] Grenade ใช้ปุ่ม `E`
+- [x] Shockwave (ผลักศัตรูวงกว้าง) ใช้ปุ่ม `2`
+- [x] Ultimate ใช้ปุ่ม `1`
+- [x] Ultimate ชาร์จจากจำนวน Kill (ไม่ใช้คูลดาวน์เวลา)
+- [x] ปืนกลับมา Reload ปกติเมื่อกระสุนหมด
+- [x] กด Ultimate แล้วได้กระสุนไม่จำกัดเป็นเวลา 15 วินาที
 
 ### ❌ ยังไม่ Implement (สำคัญ)
 
