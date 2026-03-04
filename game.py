@@ -87,18 +87,64 @@ class BossOrb:
             Ellipse(pos=(self.pos.x - inner / 2, self.pos.y - inner / 2), size=(inner, inner))
 
 
+class HealthOrb:
+    """Collectible health orb that restores a portion of max HP."""
+
+    def __init__(self, pos: Vector, heal_ratio: float = 0.15, lifetime: float = 10.0):
+        self.pos = Vector(pos.x, pos.y)
+        self.heal_ratio = max(0.01, heal_ratio)
+        self.lifetime = max(0.1, lifetime)
+        self.age = 0.0
+        self.size = 24
+        self.base_pull_speed = 190
+        self.max_pull_speed = 700
+
+    def get_hitbox(self):
+        half = self.size / 2
+        return (self.pos.x - half, self.pos.y - half, self.size, self.size)
+
+    def update(self, dt: float, player_center: Vector, pull_radius: float):
+        self.age += dt
+
+        direction = player_center - self.pos
+        distance = direction.length()
+        if distance <= 0.001 or distance > pull_radius:
+            return
+
+        strength = 1.0 - (distance / pull_radius)
+        pull_speed = self.base_pull_speed + (self.max_pull_speed - self.base_pull_speed) * strength
+        self.pos += direction.normalize() * (pull_speed * dt)
+
+    def is_expired(self) -> bool:
+        return self.age >= self.lifetime
+
+    def draw(self, canvas):
+        half = self.size / 2
+        with canvas:
+            Color(0.95, 0.22, 0.28, 0.95)
+            Ellipse(pos=(self.pos.x - half, self.pos.y - half), size=(self.size, self.size))
+            Color(1.0, 0.78, 0.82, 0.95)
+            inner = self.size * 0.42
+            Ellipse(pos=(self.pos.x - inner / 2, self.pos.y - inner / 2), size=(inner, inner))
+
+
 class GrenadeEntity:
     """Thrown grenade that travels toward target then explodes after fuse timer."""
 
-    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float, textures: List = None):
+    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float, textures: List = None, min_contact_time: float = 0.20):
         self.size = 56.0
         self.pos = Vector(start_pos.x, start_pos.y)
         self.target_pos = Vector(target_pos.x, target_pos.y)
         self.damage = damage
         self.blast_radius = blast_radius
-        self.fuse_time = 0.85
-        self.time_left = self.fuse_time
         self.travel_speed = 780.0
+
+        travel_distance = (self.target_pos - self.pos).length()
+        travel_time = travel_distance / self.travel_speed if self.travel_speed > 0 else 0.0
+        self.fuse_time = max(0.35, min(1.15, travel_time + 0.06))
+        self.time_left = self.fuse_time
+        self.age = 0.0
+        self.min_contact_time = max(0.0, min_contact_time)
         self.textures = textures or []
         self.current_frame = 0
         self.frame_timer = 0.0
@@ -111,6 +157,7 @@ class GrenadeEntity:
         self.angle = math.degrees(math.atan2(self.velocity.y, self.velocity.x))
 
     def update(self, dt: float):
+        self.age += dt
         self.time_left -= dt
         if self.textures:
             self.frame_timer += dt
@@ -121,6 +168,10 @@ class GrenadeEntity:
             to_target = self.target_pos - self.pos
             if to_target.length() > 8:
                 self.pos += self.velocity * dt
+
+    def get_hitbox(self):
+        half = self.size * 0.28
+        return (self.pos.x - half, self.pos.y - half, half * 2, half * 2)
 
     def is_exploded(self) -> bool:
         return self.time_left <= 0
@@ -228,7 +279,13 @@ class GameWidget(Widget):
         self.explosion_effects: List[ExplosionEffect] = []
         self.exp_orbs: List[ExpOrb] = []
         self.boss_orbs: List[BossOrb] = []
+        self.health_orbs: List[HealthOrb] = []
         self.exp_pickup_radius = 52.0
+        self.health_orb_drop_chance = 0.12
+        self.health_orb_special_drop_chance = 0.35
+        self.health_orb_heal_ratio = 0.15
+        self.health_orb_lifetime = 10.0
+        self.grenade_contact_arm_time = 0.20
 
         # Passive skills (always active for now)
         self.passive_attack_speed_mult = 0.82  # lower fire interval -> faster attacks
@@ -920,9 +977,7 @@ class GameWidget(Widget):
                     enemy_died = enemy.take_damage(bullet_damage)
                     self._apply_lifesteal(bullet_damage)
                     if enemy_died:
-                        self.kill_count += 1
-                        self.coins += 1
-                        self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+                        self._handle_enemy_kill(enemy)
                     hit = True
                     break
             if not hit:
@@ -935,10 +990,7 @@ class GameWidget(Widget):
                         enemy_died = se.take_damage(bullet_damage)
                         self._apply_lifesteal(bullet_damage)
                         if enemy_died:
-                            self.kill_count += 1
-                            self.coins += 10
-                            self._drop_exp_orbs(se, self._get_enemy_exp_reward(se))
-                            self._drop_boss_orb(se)
+                            self._handle_enemy_kill(se)
                         hit = True
                         break
             if hit:
@@ -1010,6 +1062,19 @@ class GameWidget(Widget):
             margin = 300
             if boss_orb.pos.x < -margin or boss_orb.pos.x > self.width + margin or boss_orb.pos.y < -margin or boss_orb.pos.y > self.height + margin:
                 self.boss_orbs.remove(boss_orb)
+
+        # Update health orbs
+        for health_orb in self.health_orbs[:]:
+            health_orb.update(dt, player_center, pull_radius * 0.9)
+            if self._rects_intersect(health_orb.get_hitbox(), pickup_box):
+                heal_amount = self.player.max_hp * health_orb.heal_ratio
+                self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
+                self.health_orbs.remove(health_orb)
+                continue
+
+            margin = 300
+            if health_orb.is_expired() or health_orb.pos.x < -margin or health_orb.pos.x > self.width + margin or health_orb.pos.y < -margin or health_orb.pos.y > self.height + margin:
+                self.health_orbs.remove(health_orb)
         
         # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
@@ -1199,6 +1264,9 @@ class GameWidget(Widget):
 
             for boss_orb in self.boss_orbs:
                 boss_orb.draw(self.canvas)
+
+            for health_orb in self.health_orbs:
+                health_orb.draw(self.canvas)
 
             # Draw enemy projectiles
             for proj in self.enemy_projectiles:
@@ -2137,6 +2205,37 @@ class GameWidget(Widget):
             offset = Vector(random.uniform(-24, 24), random.uniform(-18, 18))
             self.exp_orbs.append(ExpOrb(center + offset, orb_value))
 
+    def _handle_enemy_kill(self, enemy):
+        self.kill_count += 1
+
+        if isinstance(enemy, SpecialEnemyEntity):
+            self.coins += 10
+        else:
+            self.coins += 1
+
+        self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+        if isinstance(enemy, SpecialEnemyEntity):
+            self._drop_boss_orb(enemy)
+        self._maybe_drop_health_orb(enemy)
+
+    def _maybe_drop_health_orb(self, enemy):
+        base_chance = self.health_orb_special_drop_chance if isinstance(enemy, SpecialEnemyEntity) else self.health_orb_drop_chance
+        luck_multiplier = max(0.0, getattr(self.player, "loot_drop_multiplier", 1.0))
+        final_chance = min(0.60, base_chance * luck_multiplier)
+        if random.random() > final_chance:
+            return
+
+        hitbox = enemy.get_hitbox()
+        center = Vector(hitbox[0] + hitbox[2] / 2, hitbox[1] + hitbox[3] / 2)
+        offset = Vector(random.uniform(-20, 20), random.uniform(-14, 14))
+        self.health_orbs.append(
+            HealthOrb(
+                center + offset,
+                heal_ratio=self.health_orb_heal_ratio,
+                lifetime=self.health_orb_lifetime,
+            )
+        )
+
     def _apply_levelup_choice(self, choice_index: int):
         if not self.levelup_active:
             return
@@ -2550,6 +2649,7 @@ class GameWidget(Widget):
                 damage=damage,
                 blast_radius=blast_radius,
                 textures=self.grenade_throw_textures,
+                min_contact_time=self.grenade_contact_arm_time,
             )
         )
         return True
@@ -2615,9 +2715,7 @@ class GameWidget(Widget):
                 enemy_died = enemy.take_damage(damage)
                 self._apply_lifesteal(damage)
                 if enemy_died:
-                    self.kill_count += 1
-                    self.coins += 1
-                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+                    self._handle_enemy_kill(enemy)
 
         for enemy in self.special_enemies[:]:
             if enemy.is_dying:
@@ -2628,31 +2726,25 @@ class GameWidget(Widget):
                 enemy_died = enemy.take_damage(damage)
                 self._apply_lifesteal(damage)
                 if enemy_died:
-                    self.kill_count += 1
-                    self.coins += 10
-                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
-                    self._drop_boss_orb(enemy)
+                    self._handle_enemy_kill(enemy)
 
         return True
 
     def _grenade_hits_enemy(self, grenade: GrenadeEntity) -> bool:
-        hit_radius = max(24.0, grenade.size * 0.35)
-        gcenter = grenade.pos
+        if grenade.age < grenade.min_contact_time:
+            return False
 
+        grenade_box = grenade.get_hitbox()
         for enemy in self.enemies:
             if enemy.is_dying:
                 continue
-            ebox = enemy.get_hitbox()
-            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
-            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+            if self._rects_intersect(grenade_box, self._inflate_rect(enemy.get_hitbox(), 4.0)):
                 return True
 
         for enemy in self.special_enemies:
             if enemy.is_dying:
                 continue
-            ebox = enemy.get_hitbox()
-            ecenter = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
-            if (ecenter - gcenter).length() <= hit_radius + max(ebox[2], ebox[3]) * 0.2:
+            if self._rects_intersect(grenade_box, self._inflate_rect(enemy.get_hitbox(), 4.0)):
                 return True
 
         return False
@@ -2678,9 +2770,7 @@ class GameWidget(Widget):
                 enemy_died = enemy.take_damage(grenade.damage)
                 self._apply_lifesteal(grenade.damage)
                 if enemy_died:
-                    self.kill_count += 1
-                    self.coins += 1
-                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
+                    self._handle_enemy_kill(enemy)
 
         for enemy in self.special_enemies[:]:
             if enemy.is_dying:
@@ -2691,10 +2781,7 @@ class GameWidget(Widget):
                 enemy_died = enemy.take_damage(grenade.damage)
                 self._apply_lifesteal(grenade.damage)
                 if enemy_died:
-                    self.kill_count += 1
-                    self.coins += 10
-                    self._drop_exp_orbs(enemy, self._get_enemy_exp_reward(enemy))
-                    self._drop_boss_orb(enemy)
+                    self._handle_enemy_kill(enemy)
 
     def _drop_boss_orb(self, enemy):
         hitbox = enemy.get_hitbox()
