@@ -52,6 +52,8 @@
 - [x] Debug mode (`9`) + hitbox/path/FPS
 - [x] Spawn ศัตรู debug (`+`, `1`, `2`, `3`)
 - [x] Time speed debug cycle (`-`)
+- [x] Auto balance progression: Balanced → Conservative ตามเวลาเกม
+- [x] Balance preset debug cycle (`0`) — manual override เป็น Conservative / Balanced / Generous
 - [x] God mode (`8`)
 
 ### ❌ ยังไม่ Implement (สำคัญ)

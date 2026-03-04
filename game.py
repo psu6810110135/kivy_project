@@ -131,7 +131,18 @@ class HealthOrb:
 class GrenadeEntity:
     """Thrown grenade that travels toward target then explodes after fuse timer."""
 
-    def __init__(self, start_pos: Vector, target_pos: Vector, damage: float, blast_radius: float, textures: List = None, min_contact_time: float = 0.20):
+    def __init__(
+        self,
+        start_pos: Vector,
+        target_pos: Vector,
+        damage: float,
+        blast_radius: float,
+        textures: List = None,
+        min_contact_time: float = 0.20,
+        fuse_min_time: float = 0.35,
+        fuse_max_time: float = 1.15,
+        fuse_offset: float = 0.06,
+    ):
         self.size = 56.0
         self.pos = Vector(start_pos.x, start_pos.y)
         self.target_pos = Vector(target_pos.x, target_pos.y)
@@ -141,7 +152,9 @@ class GrenadeEntity:
 
         travel_distance = (self.target_pos - self.pos).length()
         travel_time = travel_distance / self.travel_speed if self.travel_speed > 0 else 0.0
-        self.fuse_time = max(0.35, min(1.15, travel_time + 0.06))
+        fuse_min = min(fuse_min_time, fuse_max_time)
+        fuse_max = max(fuse_min_time, fuse_max_time)
+        self.fuse_time = max(fuse_min, min(fuse_max, travel_time + fuse_offset))
         self.time_left = self.fuse_time
         self.age = 0.0
         self.min_contact_time = max(0.0, min_contact_time)
@@ -286,6 +299,13 @@ class GameWidget(Widget):
         self.health_orb_heal_ratio = 0.15
         self.health_orb_lifetime = 10.0
         self.grenade_contact_arm_time = 0.20
+        self.grenade_damage_base = 70.0
+        self.grenade_damage_str_scale = 5.0
+        self.grenade_radius_base = 220.0
+        self.grenade_radius_int_scale = 6.0
+        self.grenade_fuse_min_time = 0.35
+        self.grenade_fuse_max_time = 1.15
+        self.grenade_fuse_offset = 0.06
 
         # Passive skills (always active for now)
         self.passive_attack_speed_mult = 0.82  # lower fire interval -> faster attacks
@@ -365,6 +385,15 @@ class GameWidget(Widget):
             "grenade": {"base": 6.5, "remaining": 0.0},
             "shockwave": {"base": 8.0, "remaining": 0.0},
         }
+        self.balance_preset_order = ["conservative", "balanced", "generous"]
+        self.balance_presets = self._build_balance_presets()
+        self.auto_balance_progression = True
+        self.balance_start_preset = "balanced"
+        self.balance_end_preset = "conservative"
+        self.balance_preset_name = "balanced"
+        self.balance_status_text = "Balanced"
+        self._apply_balance_preset(self.balance_preset_name)
+
         self.skill_slots = [
             {"key": "Q", "bind": "Q / 1 / 3", "skill_id": "dodge", "label": "Dodge"},
             {"key": "E", "bind": "E", "skill_id": "grenade", "label": "Grenade"},
@@ -481,6 +510,133 @@ class GameWidget(Widget):
             "money_panel": "game_picture/ui/HUD/MONEY PANEL/Money Panel HUD.png",
         }
         return {key: self._load_texture(path) for key, path in texture_paths.items()}
+
+    def _build_balance_presets(self) -> Dict[str, Dict[str, float]]:
+        return {
+            "conservative": {
+                "orb_drop_chance": 0.09,
+                "orb_special_drop_chance": 0.25,
+                "orb_heal_ratio": 0.10,
+                "orb_lifetime": 8.0,
+                "exp_pickup_radius": 46.0,
+                "lifesteal": 0.03,
+                "pickup_radius_mult": 1.35,
+                "grenade_contact_arm_time": 0.24,
+                "grenade_cooldown": 7.2,
+                "grenade_damage_base": 62.0,
+                "grenade_damage_str_scale": 4.0,
+                "grenade_radius_base": 200.0,
+                "grenade_radius_int_scale": 5.0,
+                "grenade_fuse_min": 0.32,
+                "grenade_fuse_max": 1.00,
+                "grenade_fuse_offset": 0.05,
+            },
+            "balanced": {
+                "orb_drop_chance": 0.12,
+                "orb_special_drop_chance": 0.35,
+                "orb_heal_ratio": 0.15,
+                "orb_lifetime": 10.0,
+                "exp_pickup_radius": 52.0,
+                "lifesteal": 0.04,
+                "pickup_radius_mult": 1.50,
+                "grenade_contact_arm_time": 0.20,
+                "grenade_cooldown": 6.5,
+                "grenade_damage_base": 70.0,
+                "grenade_damage_str_scale": 5.0,
+                "grenade_radius_base": 220.0,
+                "grenade_radius_int_scale": 6.0,
+                "grenade_fuse_min": 0.35,
+                "grenade_fuse_max": 1.15,
+                "grenade_fuse_offset": 0.06,
+            },
+            "generous": {
+                "orb_drop_chance": 0.16,
+                "orb_special_drop_chance": 0.45,
+                "orb_heal_ratio": 0.20,
+                "orb_lifetime": 12.0,
+                "exp_pickup_radius": 62.0,
+                "lifesteal": 0.05,
+                "pickup_radius_mult": 1.65,
+                "grenade_contact_arm_time": 0.14,
+                "grenade_cooldown": 5.8,
+                "grenade_damage_base": 80.0,
+                "grenade_damage_str_scale": 6.0,
+                "grenade_radius_base": 250.0,
+                "grenade_radius_int_scale": 7.0,
+                "grenade_fuse_min": 0.30,
+                "grenade_fuse_max": 1.25,
+                "grenade_fuse_offset": 0.08,
+            },
+        }
+
+    def _apply_balance_values(self, values: Dict[str, float], reset_grenade_cooldown: bool = False):
+        self.health_orb_drop_chance = values["orb_drop_chance"]
+        self.health_orb_special_drop_chance = values["orb_special_drop_chance"]
+        self.health_orb_heal_ratio = values["orb_heal_ratio"]
+        self.health_orb_lifetime = values["orb_lifetime"]
+        self.exp_pickup_radius = values["exp_pickup_radius"]
+        self.passive_lifesteal = values["lifesteal"]
+        self.passive_pickup_radius_mult = values["pickup_radius_mult"]
+
+        self.grenade_contact_arm_time = values["grenade_contact_arm_time"]
+        self.grenade_damage_base = values["grenade_damage_base"]
+        self.grenade_damage_str_scale = values["grenade_damage_str_scale"]
+        self.grenade_radius_base = values["grenade_radius_base"]
+        self.grenade_radius_int_scale = values["grenade_radius_int_scale"]
+        self.grenade_fuse_min_time = values["grenade_fuse_min"]
+        self.grenade_fuse_max_time = values["grenade_fuse_max"]
+        self.grenade_fuse_offset = values["grenade_fuse_offset"]
+
+        grenade_payload = self.skill_cooldowns.get("grenade") if hasattr(self, "skill_cooldowns") else None
+        if grenade_payload is not None:
+            grenade_payload["base"] = values["grenade_cooldown"]
+            if reset_grenade_cooldown:
+                grenade_payload["remaining"] = 0.0
+            else:
+                grenade_payload["remaining"] = min(grenade_payload["remaining"], grenade_payload["base"])
+
+    def _apply_balance_preset(self, preset_name: str, reset_grenade_cooldown: bool = False):
+        preset = self.balance_presets.get(preset_name)
+        if preset is None:
+            return
+
+        self.balance_preset_name = preset_name
+        self.balance_status_text = preset_name.title()
+        self._apply_balance_values(preset, reset_grenade_cooldown=reset_grenade_cooldown)
+
+    def _apply_time_scaled_balance(self):
+        if not self.auto_balance_progression:
+            return
+
+        start_values = self.balance_presets.get(self.balance_start_preset)
+        end_values = self.balance_presets.get(self.balance_end_preset)
+        if start_values is None or end_values is None:
+            return
+
+        if self.GAME_DURATION <= 0:
+            t = 1.0
+        else:
+            t = max(0.0, min(1.0, self.game_time / self.GAME_DURATION))
+
+        blended = {}
+        for key, start_value in start_values.items():
+            end_value = end_values.get(key, start_value)
+            blended[key] = start_value + (end_value - start_value) * t
+
+        self.balance_status_text = f"Adaptive {self.balance_start_preset.title()}→{self.balance_end_preset.title()} {int(t * 100)}%"
+        self._apply_balance_values(blended, reset_grenade_cooldown=False)
+
+    def _cycle_balance_preset(self):
+        self.auto_balance_progression = False
+        if not self.balance_preset_order:
+            return
+
+        try:
+            current_idx = self.balance_preset_order.index(self.balance_preset_name)
+        except ValueError:
+            current_idx = 0
+        next_name = self.balance_preset_order[(current_idx + 1) % len(self.balance_preset_order)]
+        self._apply_balance_preset(next_name, reset_grenade_cooldown=True)
 
     def _set_state(self, new_state: str):
         if self.game_state == new_state:
@@ -619,6 +775,11 @@ class GameWidget(Widget):
             speeds = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
             current_idx = speeds.index(self.time_speed_multiplier) if self.time_speed_multiplier in speeds else 0
             self.time_speed_multiplier = speeds[(current_idx + 1) % len(speeds)]
+            return True
+
+        if self.debug_mode and key == '0':
+            # Cycle balance presets for fast playtest comparisons (manual override)
+            self._cycle_balance_preset()
             return True
 
         self.pressed_keys.add(key)
@@ -847,6 +1008,8 @@ class GameWidget(Widget):
             self._draw_victory_overlay()
             self._update_debug(0.0)
             return
+
+        self._apply_time_scaled_balance()
 
         self._update_progression_hud()
 
@@ -2113,6 +2276,7 @@ class GameWidget(Widget):
 
             info += (
                 f"\nTime Speed: {self.time_speed_multiplier}x"
+                f"\nBalance Preset: {self.balance_status_text}"
                 f"\nSpawn Interval: {self.spawn_interval:.2f}s"
                 f"\nEnemy Speed x: {self.enemy_speed_multiplier:.2f}"
                 f"\nEXP Pull Radius: {self._get_exp_pull_radius():.0f}"
@@ -2640,8 +2804,8 @@ class GameWidget(Widget):
         pbox = self.player.get_hitbox()
         start = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
 
-        damage = 70.0 + (self.player.str * 5.0)
-        blast_radius = (220.0 + (self.player.int * 6.0)) * self.boss_grenade_radius_mult
+        damage = self.grenade_damage_base + (self.player.str * self.grenade_damage_str_scale)
+        blast_radius = (self.grenade_radius_base + (self.player.int * self.grenade_radius_int_scale)) * self.boss_grenade_radius_mult
         self.grenades.append(
             GrenadeEntity(
                 start,
@@ -2650,6 +2814,9 @@ class GameWidget(Widget):
                 blast_radius=blast_radius,
                 textures=self.grenade_throw_textures,
                 min_contact_time=self.grenade_contact_arm_time,
+                fuse_min_time=self.grenade_fuse_min_time,
+                fuse_max_time=self.grenade_fuse_max_time,
+                fuse_offset=self.grenade_fuse_offset,
             )
         )
         return True
