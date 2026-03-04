@@ -391,6 +391,7 @@ class GameWidget(Widget):
             "dodge": {"base": 2.2, "remaining": 0.0},
             "grenade": {"base": 6.5, "remaining": 0.0},
             "shockwave": {"base": 8.0, "remaining": 0.0},
+            "ultimate": {"base": 0.0, "remaining": 0.0},
         }
         self.ultimate_kills_required = 20
         self.ultimate_kill_progress = 0
@@ -408,12 +409,14 @@ class GameWidget(Widget):
         self.skill_slots = [
             {"key": "Q", "bind": "Q", "skill_id": "dodge", "label": "Dash"},
             {"key": "E", "bind": "E", "skill_id": "grenade", "label": "Grenade"},
-            {"key": "1", "bind": "1", "skill_id": "shockwave", "label": "Ultimate"},
+            {"key": "2", "bind": "2", "skill_id": "shockwave", "label": "Shockwave"},
+            {"key": "1", "bind": "1", "skill_id": "ultimate", "label": "Ultimate"},
         ]
         self.skill_key_to_skill = {
             "q": "dodge",
             "e": "grenade",
-            "1": "shockwave",
+            "2": "shockwave",
+            "1": "ultimate",
         }
 
         # Level-up selection overlay
@@ -764,17 +767,17 @@ class GameWidget(Widget):
             self._spawn_enemy()
             return True
 
-        if self.debug_mode and key == '4':
+        if self.debug_mode and key == '7':
             # Spawn Gorgon (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Gorgon")
             return True
 
-        if self.debug_mode and key == '2':
+        if self.debug_mode and key == '5':
             # Spawn Kitsune (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Kitsune")
             return True
 
-        if self.debug_mode and key == '3':
+        if self.debug_mode and key == '6':
             # Spawn Red_Werewolf (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Red_Werewolf")
             return True
@@ -2266,7 +2269,7 @@ class GameWidget(Widget):
                 overlay_h = slot_h * ratio
                 Color(0.02, 0.03, 0.05, 0.72)
                 Rectangle(pos=(x, y), size=(slot_w, overlay_h))
-                if skill_id == "shockwave":
+                if skill_id == "ultimate":
                     display_text = f"{int(math.ceil(remaining))}K"
                 else:
                     display_text = f"{remaining:.1f}"
@@ -2756,7 +2759,7 @@ class GameWidget(Widget):
 
     def _update_skill_cooldowns(self, dt: float):
         for skill_id, payload in self.skill_cooldowns.items():
-            if skill_id == "shockwave":
+            if skill_id == "ultimate":
                 continue
             if payload["remaining"] > 0:
                 payload["remaining"] = max(0.0, payload["remaining"] - dt)
@@ -2779,7 +2782,7 @@ class GameWidget(Widget):
         return self.ultimate_infinite_ammo_timer > 0.0
 
     def _get_skill_cooldown(self, skill_id: str) -> float:
-        if skill_id == "shockwave":
+        if skill_id == "ultimate":
             return float(max(1, self.ultimate_kills_required))
         payload = self.skill_cooldowns.get(skill_id)
         if payload is None:
@@ -2787,7 +2790,7 @@ class GameWidget(Widget):
         return payload["base"] * self.player.skill_cooldown_multiplier * self.boss_skill_cdr_mult
 
     def _get_skill_remaining(self, skill_id: str) -> float:
-        if skill_id == "shockwave":
+        if skill_id == "ultimate":
             return float(self._get_ultimate_kills_remaining())
         payload = self.skill_cooldowns.get(skill_id)
         if payload is None:
@@ -2795,12 +2798,12 @@ class GameWidget(Widget):
         return payload["remaining"]
 
     def _is_skill_ready(self, skill_id: str) -> bool:
-        if skill_id == "shockwave":
+        if skill_id == "ultimate":
             return self._is_ultimate_ready()
         return self._get_skill_remaining(skill_id) <= 0.0
 
     def _start_skill_cooldown(self, skill_id: str):
-        if skill_id == "shockwave":
+        if skill_id == "ultimate":
             self.ultimate_kill_progress = 0
             return
         payload = self.skill_cooldowns.get(skill_id)
@@ -2823,6 +2826,8 @@ class GameWidget(Widget):
             used = self._cast_grenade()
         elif skill_id == "shockwave":
             used = self._cast_shockwave()
+        elif skill_id == "ultimate":
+            used = self._cast_ultimate()
 
         if used:
             self._start_skill_cooldown(skill_id)
@@ -2919,6 +2924,41 @@ class GameWidget(Widget):
             self.boss_upgrade_choices = []
 
     def _cast_shockwave(self) -> bool:
+        center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
+        radius = (300.0 + (self.player.int * 8.0)) * 3.0
+        push_power = 220.0 + (self.player.int * 5.0)
+
+        height = self.height if self.height > 0 else Window.height
+        block_unit = height / 10.0
+        walk_min_y = block_unit
+
+        for enemy in self.enemies + self.special_enemies:
+            if enemy.is_dying:
+                continue
+
+            ebox = enemy.get_hitbox()
+            enemy_center = Vector(ebox[0] + ebox[2] / 2, ebox[1] + ebox[3] / 2)
+            delta = enemy_center - center
+            distance = delta.length()
+            if distance > radius:
+                continue
+
+            if distance <= 0.001:
+                push_dir = Vector(1, 0)
+            else:
+                push_dir = delta.normalize()
+
+            push_scale = 1.0 - (distance / max(1.0, radius))
+            push_amount = push_power * push_scale
+            enemy.pos += push_dir * push_amount
+
+            walk_max_y = height - (3 * block_unit) - enemy.size[1]
+            enemy.pos.y = max(walk_min_y, min(enemy.pos.y, max(walk_min_y, walk_max_y)))
+            enemy.is_attacking = False
+
+        return True
+
+    def _cast_ultimate(self) -> bool:
         center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
         visual_radius = 185.0 + (self.player.int * 6.0)
 
