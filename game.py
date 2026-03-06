@@ -5,6 +5,7 @@ from kivy.clock import Clock
 from kivy.app import App
 from kivy.core.window import Window
 from kivy.core.image import Image as CoreImage
+from kivy.core.audio import SoundLoader
 from kivy.graphics import Color, Rectangle, RoundedRectangle, Line, PushMatrix, PopMatrix, Rotate, Ellipse
 from kivy.uix.widget import Widget
 from kivy.uix.label import Label
@@ -216,14 +217,43 @@ class GrenadeEntity:
                 )
 
 
+class ShockwaveEffect:
+    """Visual shockwave animation effect with radiating particles."""
+
+    def __init__(self, pos: Vector, max_radius: float):
+        self.pos = Vector(pos.x, pos.y)
+        self.max_radius = max_radius
+        self.radius = 10.0
+        self.thickness = 15.0
+        self.age = 0.0
+        self.lifetime = 0.4
+        self.done = False
+
+    def update(self, dt: float):
+        self.age += dt
+        if self.age >= self.lifetime:
+            self.done = True
+        progress = min(1.0, self.age / self.lifetime)
+        # Easing out
+        self.radius = self.max_radius * (1.0 - (1.0 - progress)**3)
+
+    def draw(self, canvas):
+        if self.done: return
+        alpha = max(0.0, 1.0 - (self.age / self.lifetime))
+        with canvas:
+            Color(1.0, 0.9, 0.2, alpha) # Yellow radiating wave
+            Line(circle=(self.pos.x, self.pos.y, self.radius), width=self.thickness * alpha)
+
+
 class ExplosionEffect:
     """Visual explosion animation effect spawned when grenade detonates."""
 
-    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0, y_lift_ratio: float = 0.0):
+    def __init__(self, pos: Vector, textures: List = None, size: float = 180.0, y_lift_ratio: float = 0.0, color=(1, 0.45, 0.2, 0.55)):
         self.pos = Vector(pos.x, pos.y)
         self.textures = textures or []
         self.size = size
         self.y_lift_ratio = y_lift_ratio
+        self.color = color
         self.current_frame = 0
         self.frame_timer = 0.0
         self.animation_speed = 0.05
@@ -260,7 +290,7 @@ class ExplosionEffect:
                     size=(self.size, self.size),
                 )
             else:
-                Color(1, 0.45, 0.2, 0.55)
+                Color(*self.color)
                 Ellipse(pos=(draw_center.x - self.size / 2, draw_center.y - self.size / 2), size=(self.size, self.size))
 
 class GameWidget(Widget):
@@ -295,6 +325,7 @@ class GameWidget(Widget):
         self.bullets: List[BulletEntity] = []
         self.grenades: List[GrenadeEntity] = []
         self.explosion_effects: List[ExplosionEffect] = []
+        self.shockwave_effects: List[ShockwaveEffect] = []
         self.exp_orbs: List[ExpOrb] = []
         self.boss_orbs: List[BossOrb] = []
         self.health_orbs: List[HealthOrb] = []
@@ -386,6 +417,33 @@ class GameWidget(Widget):
         if not self.grenade_explosion_textures:
             self.grenade_explosion_textures = self._load_sequential_textures("game_picture/player/Soldier_1", "Explosion", max_frames=20)
 
+        # Sounds
+        self.sounds = {
+            "bg_music": SoundLoader.load("game_sounds/BGmusic..mp3"),
+            "gunshot": SoundLoader.load("game_sounds/GunShot.mp3"),
+            "reload": SoundLoader.load("game_sounds/Reload.mp3"),
+            "enemy_hit": SoundLoader.load("game_sounds/EnemyHitSound.wav"),
+            "player_hit": SoundLoader.load("game_sounds/PlayerDamaged.mp3"),
+            "grenade": SoundLoader.load("game_sounds/Grenade.mp3"),
+            "shockwave": SoundLoader.load("game_sounds/Shockwave.mp3"),
+            "ult": SoundLoader.load("game_sounds/Ult.mp3"),
+            "game_over": SoundLoader.load("game_sounds/GameOver.mp3"),
+            "game_start": SoundLoader.load("game_sounds/GameStart.mp3"),
+            "picking_items": SoundLoader.load("game_sounds/PickingItems.wav"),
+        }
+        
+        if self.sounds["bg_music"]:
+            self.sounds["bg_music"].loop = True
+            # Music 50% relative to standard music volume
+            self.sounds["bg_music"].volume = 0.5 * self.settings.get("music_volume", 0.7)
+            self.sounds["bg_music"].play()
+
+        self._played_game_over = False
+        self._played_game_start = False
+        if initial_state == self.STATE_PLAYING:
+            self.play_sound("game_start")
+            self._played_game_start = True
+
         # Skill runtime state (active skills + hotkey slots)
         self.skill_cooldowns: Dict[str, Dict[str, float]] = {
             "dodge": {"base": 2.2, "remaining": 0.0},
@@ -465,6 +523,16 @@ class GameWidget(Widget):
         self._spawn_player_at_screen_center()
 
         self._scheduled_update = Clock.schedule_interval(self.update, 1 / 60)
+
+    def play_sound(self, name):
+        """Helper to play sounds dynamically using standard settings."""
+        snd = self.sounds.get(name)
+        if snd:
+            if snd.state == 'play':
+                snd.stop()
+            if name != "bg_music":
+                snd.volume = self.settings.get("sfx_volume", 0.7)
+            snd.play()
 
     def cleanup(self):
         if self._is_cleaned:
@@ -653,6 +721,11 @@ class GameWidget(Widget):
     def _set_state(self, new_state: str):
         if self.game_state == new_state:
             return
+            
+        if new_state == self.STATE_PLAYING and not self._played_game_start:
+            self.play_sound("game_start")
+            self._played_game_start = True
+            
         self.game_state = new_state
         if new_state != self.STATE_PLAYING:
             self.firing = False
@@ -731,11 +804,13 @@ class GameWidget(Widget):
         if key == 'r':
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
+                self.play_sound("reload")
             return True
 
         if key == 'v':
             if hasattr(self.player, 'toggle_firing_mode'):
                 self.player.toggle_firing_mode()
+                self.play_sound("reload")
             return True
 
         if self.levelup_active:
@@ -763,34 +838,28 @@ class GameWidget(Widget):
             return True
 
         if self.debug_mode and key in ('+', '='):
-            # Spawn an extra enemy for testing
             self._spawn_enemy()
             return True
 
         if self.debug_mode and key == '7':
-            # Spawn Gorgon (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Gorgon")
             return True
 
         if self.debug_mode and key == '5':
-            # Spawn Kitsune (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Kitsune")
             return True
 
         if self.debug_mode and key == '6':
-            # Spawn Red_Werewolf (special enemy)
             self._spawn_special_enemy_by_type("game_picture/special_enemy/Red_Werewolf")
             return True
 
         if self.debug_mode and key == '-':
-            # Speed up time in debug mode (cycle through speeds)
             speeds = [1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
             current_idx = speeds.index(self.time_speed_multiplier) if self.time_speed_multiplier in speeds else 0
             self.time_speed_multiplier = speeds[(current_idx + 1) % len(speeds)]
             return True
 
         if self.debug_mode and key == '0':
-            # Cycle balance presets for fast playtest comparisons (manual override)
             self._cycle_balance_preset()
             return True
 
@@ -864,7 +933,6 @@ class GameWidget(Widget):
             return True
 
         if touch.button == 'left':
-            # Process clicking on upgrade cards if level up screen is active
             if self.levelup_active:
                 s = self.height / 1080.0 if self.height > 0 else 1.0
                 panel_w = self.width * 0.55
@@ -880,7 +948,6 @@ class GameWidget(Widget):
                 card_start_x = panel_x + 40 * s
                 card_y = panel_y + 30 * s
                 
-                # Check if click falls within any card's bounding box
                 for idx in range(card_count):
                     cx = card_start_x + idx * (card_w + card_spacing)
                     if cx <= touch.x <= cx + card_w and card_y <= touch.y <= card_y + card_h:
@@ -888,7 +955,6 @@ class GameWidget(Widget):
                         break
                 return True
 
-            # Process boss upgrade cards
             if self.boss_upgrade_active:
                 s = self.height / 1080.0 if self.height > 0 else 1.0
                 panel_w = self.width * 0.55
@@ -916,7 +982,6 @@ class GameWidget(Widget):
 
             self.left_mouse_held = True
             
-            # Weapon firing / reloading logic
             has_infinite_ammo = self._has_ultimate_infinite_ammo()
             can_fire_now = (not getattr(self.player, 'is_reloading', False)) or has_infinite_ammo
             has_ammo_now = getattr(self.player, 'ammo', 1) > 0
@@ -937,8 +1002,9 @@ class GameWidget(Widget):
                         self.firing = True
                         self.player.start_shooting()
             elif not has_infinite_ammo and getattr(self.player, 'ammo', 0) <= 0:
-                if hasattr(self.player, 'start_reload'):
+                if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                     self.player.start_reload()
+                    self.play_sound("reload")
             return True
         return super().on_touch_down(touch)
 
@@ -951,7 +1017,6 @@ class GameWidget(Widget):
             if mode == 'AUTO':
                 self.player.stop_shooting()
                 self.firing = False
-            # For SEMI and SINGLE, we let the ongoing burst finish gracefully
             return True
         return super().on_touch_up(touch)
 
@@ -1008,15 +1073,12 @@ class GameWidget(Widget):
         if self.ultimate_infinite_ammo_timer > 0:
             self.ultimate_infinite_ammo_timer = max(0.0, self.ultimate_infinite_ammo_timer - dt)
 
-        # Update game time (stop at max duration)
         if self.game_time < self.GAME_DURATION:
             self.game_time += dt * self.time_speed_multiplier
             if self.game_time > self.GAME_DURATION:
                 self.game_time = self.GAME_DURATION
 
-            # Update spawn interval based on elapsed time (faster spawning over time)
-            # At 0:00 -> 1.5s interval, at 15:00 -> 0.22s interval
-            progress = self.game_time / self.GAME_DURATION  # 0.0 to 1.0
+            progress = self.game_time / self.GAME_DURATION
             target_interval = self.base_spawn_interval - (progress * 1.45)
             self.spawn_interval = max(self.min_spawn_interval, target_interval)
             self.enemy_speed_multiplier = 1.0 + (progress * 0.85)
@@ -1028,16 +1090,16 @@ class GameWidget(Widget):
             return
 
         self._apply_time_scaled_balance()
-
         self._update_progression_hud()
 
         self.player.update(dt, self.pressed_keys, (self.width, self.height))
         self._update_dodge_state(dt)
 
-        # If player is dead, skip gameplay updates but still draw
         if self.player.is_dead:
+            if not self._played_game_over:
+                self.play_sound("game_over")
+                self._played_game_over = True
             self.death_screen_timer += dt
-            # Still update death anims for enemies in progress
             for enemy in self.enemies[:]:
                 if enemy.is_dying:
                     enemy.update(dt, Vector(0, 0), (self.width, self.height))
@@ -1058,14 +1120,12 @@ class GameWidget(Widget):
 
         self._resume_auto_fire_if_holding()
 
-        # Keep player facing aligned with cursor while shooting
         if self.firing:
             mx, my = Window.mouse_pos
             local_mouse = Vector(*self.to_widget(mx, my))
             player_center = self.player.pos + Vector(self.player.size[0] / 2, self.player.size[1] / 2)
             self.player.facing = 1 if local_mouse.x >= player_center.x else -1
 
-        # Spawn enemies at left/right edges
         if self.game_time < self.GAME_DURATION:
             self.spawn_timer += dt
             if self.spawn_timer >= self.spawn_interval:
@@ -1076,35 +1136,31 @@ class GameWidget(Widget):
                 for _ in range(spawn_count):
                     self._spawn_enemy()
 
-            # Spawn special enemies every 3 minutes (affected by time speed multiplier)
             self.special_spawn_timer += dt * self.time_speed_multiplier
             if self.special_spawn_timer >= self.special_spawn_interval:
                 self.special_spawn_timer -= self.special_spawn_interval
                 self._spawn_special_enemy()
 
-        # Update all enemies (target player's hitbox center for accurate pathing/aim)
         pbox = self.player.get_hitbox()
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         enemy_dt = dt * self.enemy_speed_multiplier
+        
         for enemy in self.enemies[:]:
             enemy.update(enemy_dt, player_center, (self.width, self.height))
             if not enemy.is_dying:
                 self._update_enemy_state(enemy)
 
-        # Update all special enemies (Kitsune may spawn projectiles)
         for special_enemy in self.special_enemies[:]:
             if not special_enemy.is_dying:
                 projectile = special_enemy.update(enemy_dt, player_center, (self.width, self.height), bullets=self.bullets)
-                if projectile:  # Kitsune spawned a fire projectile
+                if projectile:
                     self.enemy_projectiles.append(projectile)
                 self._update_enemy_state(special_enemy)
             else:
                 special_enemy.update(enemy_dt, player_center, (self.width, self.height))
 
-        # Light separation so enemies don't stack
         self._separate_enemies()
 
-        # Re-clamp all enemies to walkable Y band after separation push
         height = self.height if self.height > 0 else Window.height
         block_unit = height / 10.0
         walk_min_y = block_unit
@@ -1112,10 +1168,7 @@ class GameWidget(Widget):
             walk_max_y = height - (3 * block_unit) - e.size[1]
             e.pos.y = max(walk_min_y, min(e.pos.y, max(walk_min_y, walk_max_y)))
 
-        # Handle weapon fire cooldown tracking
         self.fire_timer += dt
-
-        # Handle shooting execution
         if self.firing and not self.player.is_dead:
             has_infinite_ammo = self._has_ultimate_infinite_ammo()
             if getattr(self.player, 'is_reloading', False) and not has_infinite_ammo:
@@ -1124,7 +1177,7 @@ class GameWidget(Widget):
                 self.burst_shots_remaining = 0
             elif has_infinite_ammo or getattr(self.player, 'ammo', 1) > 0:
                 if self.fire_timer >= self._get_effective_fire_rate():
-                    self.fire_timer = 0.0  # Reset cooldown explicitly to avoid rapid stack bursts
+                    self.fire_timer = 0.0
                     self._spawn_bullet()
                     if not has_infinite_ammo and hasattr(self.player, 'consume_ammo'):
                         self.player.consume_ammo()
@@ -1136,50 +1189,43 @@ class GameWidget(Widget):
                             self.firing = False
                             self.player.stop_shooting()
             else:
-                if hasattr(self.player, 'start_reload'):
+                if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                     self.player.start_reload()
+                    self.play_sound("reload")
                 self.firing = False
                 self.burst_shots_remaining = 0
         
-        # Update and clean up bullets + bullet-enemy collision
         for b in self.bullets[:]:
             b.update(dt)
-            # Off-screen removal
             if b.pos.x < -50 or b.pos.x > self.width + 50 or b.pos.y < -50 or b.pos.y > self.height + 50:
                 self.bullets.remove(b)
                 continue
-            # Check collision with regular enemies
             bullet_box = b.get_hitbox()
             hit = False
             for enemy in self.enemies[:]:
-                if enemy.is_dying:
-                    continue
+                if enemy.is_dying: continue
                 if self._rects_intersect(bullet_box, enemy.get_hitbox()):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
                     self._apply_lifesteal(bullet_damage)
-                    if enemy_died:
-                        self._handle_enemy_kill(enemy)
+                    self.play_sound("enemy_hit")
+                    if enemy_died: self._handle_enemy_kill(enemy)
                     hit = True
                     break
             if not hit:
-                # Check collision with special enemies
                 for se in self.special_enemies[:]:
-                    if se.is_dying:
-                        continue
+                    if se.is_dying: continue
                     if self._rects_intersect(bullet_box, se.get_hitbox()):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
                         self._apply_lifesteal(bullet_damage)
-                        if enemy_died:
-                            self._handle_enemy_kill(se)
+                        self.play_sound("enemy_hit")
+                        if enemy_died: self._handle_enemy_kill(se)
                         hit = True
                         break
-            if hit:
-                if b in self.bullets:
-                    self.bullets.remove(b)
+            if hit and b in self.bullets:
+                self.bullets.remove(b)
 
-        # Update grenades and explode when timer completes
         for grenade in self.grenades[:]:
             grenade.update(dt)
             if grenade.is_exploded() or self._grenade_hits_enemy(grenade):
@@ -1188,35 +1234,32 @@ class GameWidget(Widget):
 
         for effect in self.explosion_effects[:]:
             effect.update(dt)
-            if effect.done:
-                self.explosion_effects.remove(effect)
+            if effect.done: self.explosion_effects.remove(effect)
+
+        for effect in self.shockwave_effects[:]:
+            effect.update(dt)
+            if effect.done: self.shockwave_effects.remove(effect)
         
-        # Update and clean up enemy projectiles
         for proj in self.enemy_projectiles[:]:
             proj.update(dt)
-            # Check collision with player
             pbox = self.player.get_hitbox()
             proj_box = proj.get_hitbox()
             if self._rects_intersect(pbox, proj_box):
-                # Hit player! Apply damage (unless godmode)
                 if self._can_player_take_damage():
-                    # Kitsune fire damage
                     fire_damage = 25
                     for se in self.special_enemies:
                         if "Kitsune" in se.asset_path:
                             fire_damage = se.damage
                             break
                     self.player.take_damage(fire_damage)
-                if not hasattr(self, 'player_hit_flash'):
-                    self.player_hit_flash = 0.0
-                self.player_hit_flash = 0.3  # Flash for 0.3 seconds
+                    self.play_sound("player_hit")
+                if not hasattr(self, 'player_hit_flash'): self.player_hit_flash = 0.0
+                self.player_hit_flash = 0.3
                 self.enemy_projectiles.remove(proj)
                 continue
-            # Remove if off-screen
             if proj.pos.x < 0 or proj.pos.x > self.width or proj.pos.y < 0 or proj.pos.y > self.height:
                 self.enemy_projectiles.remove(proj)
 
-        # Update exp orbs: pull toward player and collect on touch
         pull_radius = self._get_exp_pull_radius()
         pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius * self.passive_pickup_radius_mult)
         for orb in self.exp_orbs[:]:
@@ -1224,14 +1267,13 @@ class GameWidget(Widget):
             if self._rects_intersect(orb.get_hitbox(), pickup_box):
                 self._grant_player_exp(orb.exp_value)
                 self.exp_orbs.remove(orb)
+                self.play_sound("picking_items")
                 continue
 
-            # Cleanup only if somehow far outside the world
             margin = 300
             if orb.pos.x < -margin or orb.pos.x > self.width + margin or orb.pos.y < -margin or orb.pos.y > self.height + margin:
                 self.exp_orbs.remove(orb)
 
-        # Update boss reward orbs
         for boss_orb in self.boss_orbs[:]:
             boss_orb.update(dt, player_center, pull_radius * 0.95)
             if self._rects_intersect(boss_orb.get_hitbox(), pickup_box):
@@ -1240,12 +1282,10 @@ class GameWidget(Widget):
                 if not self.boss_upgrade_active:
                     self._open_next_boss_upgrade()
                 continue
-
             margin = 300
             if boss_orb.pos.x < -margin or boss_orb.pos.x > self.width + margin or boss_orb.pos.y < -margin or boss_orb.pos.y > self.height + margin:
                 self.boss_orbs.remove(boss_orb)
 
-        # Update health orbs
         for health_orb in self.health_orbs[:]:
             health_orb.update(dt, player_center, pull_radius * 0.9)
             if self._rects_intersect(health_orb.get_hitbox(), pickup_box):
@@ -1253,38 +1293,29 @@ class GameWidget(Widget):
                 self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
                 self.health_orbs.remove(health_orb)
                 continue
-
             margin = 300
             if health_orb.is_expired() or health_orb.pos.x < -margin or health_orb.pos.x > self.width + margin or health_orb.pos.y < -margin or health_orb.pos.y > self.height + margin:
                 self.health_orbs.remove(health_orb)
         
-        # Update hit flash timer
         if hasattr(self, 'player_hit_flash') and self.player_hit_flash > 0:
             self.player_hit_flash -= dt
 
-        # Enemy melee attack damages player
         if not self.player.is_dead:
             for enemy in self.enemies + self.special_enemies:
-                if enemy.is_dying:
-                    continue
-                if not getattr(enemy, 'is_attacking', False):
-                    continue
-                if enemy.damage_cooldown > 0:
-                    continue
-                # Check attack hitbox vs player
+                if enemy.is_dying: continue
+                if not getattr(enemy, 'is_attacking', False): continue
+                if enemy.damage_cooldown > 0: continue
                 attack_box = enemy.get_attack_hitbox()
-                if attack_box is None:
-                    continue
+                if attack_box is None: continue
                 pbox = self.player.get_hitbox()
                 if self._rects_intersect(attack_box, pbox):
                     if self._can_player_take_damage():
                         self.player.take_damage(enemy.damage)
+                        self.play_sound("player_hit")
                     enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
-                    if not hasattr(self, 'player_hit_flash'):
-                        self.player_hit_flash = 0.0
+                    if not hasattr(self, 'player_hit_flash'): self.player_hit_flash = 0.0
                     self.player_hit_flash = 0.3
 
-        # Remove enemies whose death animation is done
         self.enemies = [e for e in self.enemies if not e.death_anim_done]
         self.special_enemies = [e for e in self.special_enemies if not e.death_anim_done]
 
@@ -1295,7 +1326,6 @@ class GameWidget(Widget):
         """Trigger attack animation when enemy's attack hitbox (hand/tail) touches player."""
         if enemy.is_dying:
             return
-        # Add hysteresis to prevent stuttering: use different thresholds for entering/exiting attack
         if not hasattr(enemy, 'is_attacking'):
             enemy.is_attacking = False
         
@@ -1304,19 +1334,16 @@ class GameWidget(Widget):
         player_center = Vector(pbox[0] + pbox[2] / 2, pbox[1] + pbox[3] / 2)
         distance = (player_center - enemy_center).length()
         
-        # Per-enemy hysteresis thresholds from stats
         attack_enter_distance = getattr(enemy, 'attack_enter_dist', 150)
         attack_exit_distance = getattr(enemy, 'attack_exit_dist', 200)
         
         if enemy.is_attacking:
-            # Currently attacking - only stop if player moves far enough away
             if distance > attack_exit_distance:
                 enemy.is_attacking = False
                 self._set_enemy_anim(enemy, "walk")
             else:
                 self._set_enemy_anim(enemy, "attack")
         else:
-            # Currently walking - only start attacking if player is close enough
             if distance < attack_enter_distance:
                 enemy.is_attacking = True
                 self._set_enemy_anim(enemy, "attack")
@@ -1332,24 +1359,19 @@ class GameWidget(Widget):
         max_sep_radius = max(getattr(enemy, "separation_radius", 40.0) for enemy in all_enemies)
         cell_size = max_sep_radius * 2
 
-        # Build spatial grid
         grid = {}
         for enemy in all_enemies:
             cx = int((enemy.pos.x + enemy.size[0] / 2) / cell_size)
             cy = int((enemy.pos.y + enemy.size[1] / 2) / cell_size)
             key = (cx, cy)
-            if key not in grid:
-                grid[key] = []
+            if key not in grid: grid[key] = []
             grid[key].append(enemy)
 
-        # Only check enemies in same or adjacent cells
         for (cx, cy), cell_enemies in grid.items():
-            # Check within same cell
             for i in range(len(cell_enemies)):
                 for j in range(i + 1, len(cell_enemies)):
                     self._push_apart(cell_enemies[i], cell_enemies[j])
 
-            # Check adjacent cells (only right, down, and diagonals to avoid duplicate checks)
             adjacent = [(cx + 1, cy), (cx, cy + 1), (cx + 1, cy + 1), (cx + 1, cy - 1)]
             for adj_key in adjacent:
                 if adj_key in grid:
@@ -1358,7 +1380,6 @@ class GameWidget(Widget):
                             self._push_apart(e1, e2)
 
     def _push_apart(self, e1, e2):
-        """Push two enemies apart if they're too close."""
         c1 = e1.pos + Vector(e1.size[0] / 2, e1.size[1] / 2)
         c2 = e2.pos + Vector(e2.size[0] / 2, e2.size[1] / 2)
         delta = c2 - c1
@@ -1375,7 +1396,6 @@ class GameWidget(Widget):
             delta = Vector(1, 0)
             dist = 1.0
 
-        # Soft collision: only resolve part of the overlap for smoother crowd motion.
         overlap = min_dist - dist
         soft_factor = 0.50
         push = overlap * 0.5 * soft_factor
@@ -1384,15 +1404,12 @@ class GameWidget(Widget):
         e2.pos += move
 
     def _get_enemy_render_order(self):
-        """Render order: danger first to front, then Y-sort, then stable spawn tie-break."""
         all_enemies = self.enemies + self.special_enemies
 
         def sort_key(enemy):
             danger = enemy.get_render_danger_priority() if hasattr(enemy, "get_render_danger_priority") else 0
             center_y = enemy.pos.y + enemy.size[1] / 2
             spawn_order = getattr(enemy, "spawn_order", 0)
-            # Lower center_y (closer to camera in 2.5D) should render in front (later draw).
-            # Newer spawns go slightly behind to reduce flip-flop overlap artifacts.
             return (danger, -center_y, -spawn_order)
 
         return sorted(all_enemies, key=sort_key)
@@ -1420,69 +1437,38 @@ class GameWidget(Widget):
         with self.canvas:
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
-
-            # Draw player (hit flash handled inside draw())
             self.player.draw(self.canvas)
-            Color(1, 1, 1, 1)  # Reset color
+            Color(1, 1, 1, 1)
 
-            # Draw enemies using danger-aware Y-sort ordering.
-            for enemy in self._get_enemy_render_order():
-                enemy.draw(self.canvas)
+            for enemy in self._get_enemy_render_order(): enemy.draw(self.canvas)
+            for b in self.bullets: b.draw(self.canvas)
+            for grenade in self.grenades: grenade.draw(self.canvas)
+            for effect in self.explosion_effects: effect.draw(self.canvas)
+            for effect in self.shockwave_effects: effect.draw(self.canvas)
+            for orb in self.exp_orbs: orb.draw(self.canvas)
+            for boss_orb in self.boss_orbs: boss_orb.draw(self.canvas)
+            for health_orb in self.health_orbs: health_orb.draw(self.canvas)
+            for proj in self.enemy_projectiles: proj.draw(self.canvas)
 
-            # Draw bullets
-            for b in self.bullets:
-                b.draw(self.canvas)
-
-            # Draw grenades
-            for grenade in self.grenades:
-                grenade.draw(self.canvas)
-
-            for effect in self.explosion_effects:
-                effect.draw(self.canvas)
-
-            # Draw exp orbs
-            for orb in self.exp_orbs:
-                orb.draw(self.canvas)
-
-            for boss_orb in self.boss_orbs:
-                boss_orb.draw(self.canvas)
-
-            for health_orb in self.health_orbs:
-                health_orb.draw(self.canvas)
-
-            # Draw enemy projectiles
-            for proj in self.enemy_projectiles:
-                proj.draw(self.canvas)
-
-            # Draw game UI (HP bar, EXP bar, timer, kills, etc.)
             self._draw_game_ui()
+            if self.levelup_active: self._draw_levelup_overlay()
+            if self.boss_upgrade_active: self._draw_boss_upgrade_overlay()
 
-            if self.levelup_active:
-                self._draw_levelup_overlay()
-
-            if self.boss_upgrade_active:
-                self._draw_boss_upgrade_overlay()
-
-            # Debug hitboxes
             if self.debug_mode and self.game_state == self.STATE_PLAYING:
-                # Player Hitbox
-                Color(1, 0, 0, 0.8) # Red for player
+                Color(1, 0, 0, 0.8)
                 hx, hy, hw, hh = self.player.get_hitbox()
                 Line(rectangle=(hx, hy, hw, hh), width=2)
 
-                # Bullet Hitboxes
-                Color(0, 1, 0, 0.8) # Green for bullets
+                Color(0, 1, 0, 0.8)
                 for b in self.bullets:
                     bx, by, bw, bh = b.get_hitbox()
                     Line(rectangle=(bx, by, bw, bh), width=1)
 
-                # Enemy Projectile Hitboxes
-                Color(1, 0.5, 0, 0.8) # Orange for enemy projectiles
+                Color(1, 0.5, 0, 0.8)
                 for proj in self.enemy_projectiles:
                     px, py, pw, ph = proj.get_hitbox()
                     Line(rectangle=(px, py, pw, ph), width=1)
 
-                # EXP Orb hitboxes and pull radius
                 Color(0.2, 1, 0.3, 0.85)
                 for orb in self.exp_orbs:
                     ox, oy, ow, oh = orb.get_hitbox()
@@ -1493,81 +1479,56 @@ class GameWidget(Widget):
                 center_y = pbox[1] + pbox[3] / 2
                 Line(circle=(center_x, center_y, self._get_exp_pull_radius()), width=1)
 
-                # Enemy Hitbox
-                Color(0, 0, 1, 0.8) # Blue for enemy
+                Color(0, 0, 1, 0.8)
                 for enemy in self.enemies:
                     ex, ey, ew, eh = enemy.get_hitbox()
                     Line(rectangle=(ex, ey, ew, eh), width=2)
-                    
-                    # Enemy Attack Hitbox (hand)
                     attack_box = enemy.get_attack_hitbox()
                     if attack_box:
-                        Color(1, 1, 0, 0.8) # Yellow for attack hitbox
+                        Color(1, 1, 0, 0.8)
                         ax, ay, aw, ah = attack_box
                         Line(rectangle=(ax, ay, aw, ah), width=2)
+                        Color(0, 0, 1, 0.8)
 
-                # Special Enemy Hitbox
-                Color(1, 0, 1, 0.8) # Magenta for special enemy
+                Color(1, 0, 1, 0.8)
                 for special_enemy in self.special_enemies:
                     ex, ey, ew, eh = special_enemy.get_hitbox()
                     Line(rectangle=(ex, ey, ew, eh), width=2)
-                    
-                    # Special Enemy Attack Hitbox (tail/hand)
                     attack_box = special_enemy.get_attack_hitbox()
                     if attack_box:
-                        Color(1, 0.5, 0, 0.8) # Orange for special attack hitbox
+                        Color(1, 0.5, 0, 0.8)
                         ax, ay, aw, ah = attack_box
                         Line(rectangle=(ax, ay, aw, ah), width=2)
+                        Color(1, 0, 1, 0.8)
 
-                # Enemy Path to Player
-                Color(1, 1, 0, 0.8) # Yellow for path
+                Color(1, 1, 0, 0.8)
                 for enemy in self.enemies:
                     px1, py1, px2, py2 = enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
 
-                # Special Enemy Path to Player
-                Color(0, 1, 1, 0.8) # Cyan for special enemy path
+                Color(0, 1, 1, 0.8)
                 for special_enemy in self.special_enemies:
                     px1, py1, px2, py2 = special_enemy.get_path_points()
                     Line(points=[px1, py1, px2, py2], width=2)
 
-                # --- Debug stat labels on entities ---
                 self._draw_debug_entity_stats()
 
     def _draw_debug_entity_stats(self):
-        """Draw HP / DMG / SPD / Cooldown text above each entity in debug mode."""
-        # Player stats
         phx, phy, phw, phh = self.player.get_hitbox()
-        p_info = (
-            f"HP:{self.player.hp}/{self.player.max_hp}  "
-            f"FireRate:{self.fire_rate:.2f}s  "
-            f"SPD:{self.player.speed}"
-        )
+        p_info = (f"HP:{self.player.hp}/{self.player.max_hp}  FireRate:{self.fire_rate:.2f}s  SPD:{self.player.speed}")
         self._draw_label_at(p_info, phx + phw / 2, phy + phh + 80, (0, 1, 0.5, 1))
 
-        # Regular enemies
         for enemy in self.enemies:
             ehx, ehy, ehw, ehh = enemy.get_hitbox()
             is_atk = getattr(enemy, 'is_attacking', False)
-            e_info = (
-                f"HP:{enemy.hp}/{enemy.max_hp}  "
-                f"DMG:{enemy.damage}  "
-                f"SPD:{enemy.speed}  "
-                f"AtkSpd:{enemy.attack_anim_speed:.2f}  "
-                f"{'ATK' if is_atk else 'walk'}"
-            )
+            e_info = (f"HP:{enemy.hp}/{enemy.max_hp}  DMG:{enemy.damage}  SPD:{enemy.speed}  AtkSpd:{enemy.attack_anim_speed:.2f}  {'ATK' if is_atk else 'walk'}")
             self._draw_label_at(e_info, ehx + ehw / 2, ehy + ehh + 75, (1, 0.7, 0.3, 1))
 
-        # Special enemies
         for se in self.special_enemies:
             shx, shy, shw, shh = se.get_hitbox()
             is_atk = getattr(se, 'is_attacking', False)
             se_name = se.asset_path.split('/')[-1]
-            se_info = (
-                f"{se_name}  HP:{se.hp}/{se.max_hp}  "
-                f"DMG:{se.damage}  SPD:{se.speed}  "
-                f"AtkSpd:{se.attack_anim_speed:.2f}  "
-            )
+            se_info = (f"{se_name}  HP:{se.hp}/{se.max_hp}  DMG:{se.damage}  SPD:{se.speed}  AtkSpd:{se.attack_anim_speed:.2f}  ")
             if "Kitsune" in se.asset_path:
                 remaining_cd = max(0.0, se.fire_cooldown - se.fire_timer)
                 se_info += f"FireCD:{remaining_cd:.1f}/{se.fire_cooldown:.1f}s  AI:{se.ai_state}"
@@ -1576,8 +1537,6 @@ class GameWidget(Widget):
             self._draw_label_at(se_info, shx + shw / 2, shy + shh + 85, (0.8, 0.3, 1, 1))
 
     def _draw_label_at(self, text: str, cx: float, y: float, color_tuple=(1, 1, 1, 1)):
-        """Render a small debug label centered at (cx, y) on the canvas with outline."""
-        # Draw dark outline by rendering the text offset in 4 directions
         outline_color = (0, 0, 0, 1)
         outline_lbl = CoreLabel(text=text, font_size=30, color=outline_color)
         outline_lbl.refresh()
@@ -1590,17 +1549,14 @@ class GameWidget(Widget):
             w, h = tex.size
             x = cx - w / 2
             with self.canvas:
-                # Outline (offset in 4 directions)
                 if outline_tex:
                     Color(*outline_color)
                     for dx, dy in [(-1, -1), (1, -1), (-1, 1), (1, 1)]:
                         Rectangle(texture=outline_tex, pos=(x + dx, y + dy), size=(w, h))
-                # Foreground text
                 Color(*color_tuple)
                 Rectangle(texture=tex, pos=(x, y), size=(w, h))
 
     def _draw_timer(self):
-        """Draw the timer text on the canvas at the top center."""
         remaining = self.GAME_DURATION - self.game_time
         minutes = int(remaining // 60)
         seconds = int(remaining % 60)
@@ -1614,26 +1570,18 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=texture, pos=(x, y), size=(label_w, label_h))
 
-    # ─── Enhanced UI Drawing Methods ────────────────────────────────────
-
-    def _draw_outlined_text(self, text, x, y, font_size=24, color=(1, 1, 1, 1),
-                            anchor_x='left', anchor_y='bottom', bold=False):
-        """Draw text with dark outline at the specified position. Returns (w, h)."""
+    def _draw_outlined_text(self, text, x, y, font_size=24, color=(1, 1, 1, 1), anchor_x='left', anchor_y='bottom', bold=False):
         lbl = CoreLabel(text=text, font_size=font_size, color=color, bold=bold)
         lbl.refresh()
         tex = lbl.texture
-        if not tex:
-            return (0, 0)
+        if not tex: return (0, 0)
         w, h = tex.size
         draw_x, draw_y = x, y
-        if anchor_x == 'center':
-            draw_x = x - w / 2
-        elif anchor_x == 'right':
-            draw_x = x - w
-        if anchor_y == 'center':
-            draw_y = y - h / 2
-        elif anchor_y == 'top':
-            draw_y = y - h
+        if anchor_x == 'center': draw_x = x - w / 2
+        elif anchor_x == 'right': draw_x = x - w
+        if anchor_y == 'center': draw_y = y - h / 2
+        elif anchor_y == 'top': draw_y = y - h
+        
         shadow = CoreLabel(text=text, font_size=font_size, color=(0, 0, 0, 1), bold=bold)
         shadow.refresh()
         stex = shadow.texture
@@ -1646,8 +1594,7 @@ class GameWidget(Widget):
         return (w, h)
 
     def _draw_texture_centered(self, texture, center_x: float, center_y: float, scale: float = 1.0, alpha: float = 1.0):
-        if texture is None:
-            return None
+        if texture is None: return None
         width = texture.width * scale
         height = texture.height * scale
         x = center_x - width / 2
@@ -1657,8 +1604,7 @@ class GameWidget(Widget):
         return (x, y, width, height)
 
     def _draw_texture_fill_width(self, texture, x: float, y: float, width: float, height: float, alpha: float = 1.0):
-        if texture is None or width <= 0 or height <= 0:
-            return
+        if texture is None or width <= 0 or height <= 0: return
         Color(1, 1, 1, alpha)
         Rectangle(texture=texture, pos=(x, y), size=(width, height))
 
@@ -1782,10 +1728,8 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=self.ui_textures.get("defeat_preset"), pos=(panel_x, panel_y), size=(panel_w, panel_h))
 
-            # Title
             self._draw_outlined_text("MISSION FAILED", self.width * 0.5, panel_y + panel_h - 92 * s, font_size=int(62 * s), color=(1, 0.2, 0.2, 1), anchor_x='center', anchor_y='center', bold=True)
 
-            # Stats
             self._draw_outlined_text(
                 f"Kills: {self.kill_count}   Level: {self.player.level}   Time: {self._format_time(self.game_time)}",
                 self.width * 0.5,
@@ -1796,7 +1740,6 @@ class GameWidget(Widget):
                 anchor_y='center'
             )
 
-            # Coin display — use defeat preset's built-in coin bar and draw only the number
             coin_y = panel_y + panel_h * 0.48
             self._draw_outlined_text(
                 f"{int(self.coins)}",
@@ -1809,7 +1752,6 @@ class GameWidget(Widget):
                 bold=True,
             )
 
-            # Buttons — large and centered
             btn_scale = 2.25 * s
             retry_fallback = (self.width * 0.5 - 190 * s, panel_y + 130 * s, 380 * s, 106 * s)
             menu_fallback = (self.width * 0.5 - 190 * s, panel_y + 18 * s, 380 * s, 106 * s)
@@ -1827,7 +1769,6 @@ class GameWidget(Widget):
             Color(0, 0, 0, 0.65)
             Rectangle(pos=(0, 0), size=self.size)
 
-            # Panel — sized to fill nicely
             panel_w = self.width * 0.62
             panel_h = self.height * 0.68
             panel_x = (self.width - panel_w) / 2
@@ -1835,12 +1776,10 @@ class GameWidget(Widget):
             Color(1, 1, 1, 1)
             Rectangle(texture=self.ui_textures.get("victory_preset"), pos=(panel_x, panel_y), size=(panel_w, panel_h))
 
-            # Stars below the panel's built-in "VICTORY" header
             star_y = panel_y + panel_h - 160 * s
             for idx in range(stars):
                 self._draw_texture_centered(self.ui_textures.get("victory_star"), self.width * 0.5 + (idx - (stars - 1) / 2) * 110 * s, star_y, 0.7 * s)
 
-            # Stats text
             self._draw_outlined_text(
                 f"Survived: {self._format_time(self.game_time)}   Kills: {self.kill_count}   Level: {self.player.level}",
                 self.width * 0.5,
@@ -1851,12 +1790,10 @@ class GameWidget(Widget):
                 anchor_y='center'
             )
 
-            # Separator line
             line_y = star_y - 160 * s
             Color(0.6, 0.58, 0.5, 0.4)
             Rectangle(pos=(panel_x + 40 * s, line_y), size=(panel_w - 80 * s, 2 * s))
 
-            # Coin display — use preset's built-in coin bar/icon, draw only the number
             coin_y = panel_y + panel_h * 0.335
             self._draw_outlined_text(
                 f"{int(self.coins)}",
@@ -1869,7 +1806,6 @@ class GameWidget(Widget):
                 bold=True,
             )
 
-            # Buttons — side by side, large
             btn_scale = 2.1 * s
             btn_y = panel_y + 70 * s
             retry_fallback = (self.width * 0.5 - 260 * s, btn_y - 50 * s, 220 * s, 100 * s)
@@ -1920,7 +1856,6 @@ class GameWidget(Widget):
                 self._draw_texture_fill_width(bar_fill_texture, bx, by, bw * max(0.0, min(1.0, self.settings[key])), bh)
                 self.settings_sliders[key] = (bx, by, bw, bh)
 
-            # Fullscreen toggle (custom square for consistent size and visibility)
             toggle_size = 52 * s
             toggle_cx = px + pw * 0.50
             toggle_cy = py + ph * 0.30
@@ -1953,6 +1888,8 @@ class GameWidget(Widget):
             bx, by, bw, bh = self.settings_sliders[key]
             if bx <= x <= bx + bw and by <= y <= by + bh:
                 self.settings[key] = max(0.0, min(1.0, (x - bx) / max(1.0, bw)))
+                if key == "music_volume" and self.sounds.get("bg_music"):
+                    self.sounds["bg_music"].volume = self.settings["music_volume"] * 0.5
                 return True
 
         checkbox = self.settings_sliders.get("fullscreen_toggle")
@@ -1964,9 +1901,7 @@ class GameWidget(Widget):
         return False
 
     def _draw_game_ui(self):
-        """Main UI orchestrator — draws all HUD elements on canvas."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
-        # Low HP warning vignette
         if not self.player.is_dead and self.player.max_hp > 0:
             hp_ratio = self.player.hp / self.player.max_hp
             if hp_ratio < 0.3:
@@ -1980,7 +1915,6 @@ class GameWidget(Widget):
         self._draw_skill_slots(s)
 
     def _draw_ammo_panel(self, s):
-        """Draw the ammo counter prominently at the bottom right of the screen."""
         ammo = getattr(self.player, 'ammo', 30)
         max_ammo = getattr(self.player, 'max_ammo', 30)
         is_reloading = getattr(self.player, 'is_reloading', False)
@@ -2003,7 +1937,6 @@ class GameWidget(Widget):
             anchor_x='right', anchor_y='bottom', bold=True
         )
 
-        # Draw Firing Mode
         mode = getattr(self.player, 'firing_mode', 'AUTO')
         mode_text = f"Mode: {mode}"
         self._draw_outlined_text(
@@ -2013,20 +1946,17 @@ class GameWidget(Widget):
         )
 
     def _draw_hud_panel(self, s):
-        """Draw the player status HUD panel in the top-left corner."""
         pad = 16 * s
         panel_x = 16 * s
         panel_w = 400 * s
         panel_h = 150 * s
         panel_y = self.height - panel_h - 16 * s
 
-        # Panel background
         Color(0.05, 0.05, 0.12, 0.75)
         RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[12 * s])
         Color(0.45, 0.42, 0.55, 0.5)
         Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 12 * s), width=1.5)
 
-        # ── Level badge ──
         badge_x = panel_x + pad
         badge_y = panel_y + panel_h - 36 * s
         badge_r = 16 * s
@@ -2041,7 +1971,6 @@ class GameWidget(Widget):
             f"LV {self.player.level}", badge_x + badge_r * 2 + 8 * s, badge_y + 6 * s,
             font_size=int(20 * s), color=(1, 0.92, 0.5, 1), bold=True
         )
-        # Stat points indicator
         if self.player.stat_points > 0:
             self._draw_outlined_text(
                 f"+{self.player.stat_points} SP", panel_x + panel_w - pad, badge_y + 6 * s,
@@ -2049,23 +1978,19 @@ class GameWidget(Widget):
                 anchor_x='right', bold=True
             )
 
-        # ── HP Bar ──
         bar_x = panel_x + pad
         bar_w = panel_w - pad * 2
         bar_h = 22 * s
         hp_bar_y = panel_y + panel_h - 68 * s
 
-        # HP heart icon (red circle)
         heart_size = 18 * s
         Color(0.9, 0.15, 0.15, 1)
         Ellipse(pos=(bar_x, hp_bar_y + (bar_h - heart_size) / 2), size=(heart_size, heart_size))
         hp_bar_x = bar_x + heart_size + 6 * s
         hp_bar_w = bar_w - heart_size - 6 * s
 
-        # Bar background
         Color(0.2, 0.08, 0.08, 0.9)
         RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(hp_bar_w, bar_h), radius=[4 * s])
-        # Bar fill
         hp_ratio = max(0, min(1, self.player.hp / self.player.max_hp)) if self.player.max_hp > 0 else 0
         fill_w = hp_bar_w * hp_ratio
         if fill_w > 1:
@@ -2076,7 +2001,6 @@ class GameWidget(Widget):
             else:
                 Color(0.88, 0.12, 0.12, 0.95)
             RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(fill_w, bar_h), radius=[4 * s])
-        # HP text overlay
         self._draw_outlined_text(
             f"{int(self.player.hp)}/{int(self.player.max_hp)}",
             hp_bar_x + hp_bar_w / 2, hp_bar_y + bar_h / 2,
@@ -2084,7 +2008,6 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        # ── EXP Bar ──
         exp_bar_y = hp_bar_y - 18 * s
         exp_bar_h = 12 * s
         Color(0.08, 0.08, 0.18, 0.9)
@@ -2101,7 +2024,6 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='center'
         )
 
-        # ── Stats line ──
         stats_y = exp_bar_y - 20 * s
         stats_text = (
             f"STR {self.player.str}  DEX {self.player.dex}  AGI {self.player.agi}  "
@@ -2112,7 +2034,6 @@ class GameWidget(Widget):
             font_size=int(12 * s), color=(0.72, 0.72, 0.82, 0.85)
         )
 
-        # ── Coin counter (below HUD panel) ──
         coin_y = panel_y - 12 * s
         money_icon_tex = self.ui_textures.get("money_icon")
         if money_icon_tex:
@@ -2130,7 +2051,6 @@ class GameWidget(Widget):
                 font_size=int(14 * s), color=(1, 0.88, 0.2, 1), bold=True
             )
 
-        # ── Combat info line ──
         combat_y = stats_y - 18 * s
         combat_text = (
             f"DMG {self.player.bullet_damage:.1f}   "
@@ -2143,7 +2063,6 @@ class GameWidget(Widget):
         )
 
     def _draw_timer_panel(self, s):
-        """Draw the styled timer panel at top center."""
         remaining = max(0, self.GAME_DURATION - self.game_time)
         minutes = int(remaining // 60)
         seconds = int(remaining % 60)
@@ -2154,10 +2073,8 @@ class GameWidget(Widget):
         panel_x = (self.width - panel_w) / 2
         panel_y = self.height - panel_h - 12 * s
 
-        # Panel background
         Color(0.05, 0.05, 0.12, 0.78)
         RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[10 * s])
-        # Border — color shifts with time
         if remaining > 300:
             Color(0.4, 0.4, 0.55, 0.6)
         elif remaining > 60:
@@ -2166,7 +2083,6 @@ class GameWidget(Widget):
             Color(0.9, 0.2, 0.15, 0.8)
         Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.5)
 
-        # Timer text
         timer_color = (1, 1, 1, 1) if remaining > 60 else (1, 0.4, 0.3, 1)
         self._draw_outlined_text(
             timer_text, self.width / 2, panel_y + panel_h / 2 + 8 * s,
@@ -2174,7 +2090,6 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        # Difficulty indicator
         progress = min(1.0, self.game_time / self.GAME_DURATION) if self.GAME_DURATION > 0 else 0
         diff_level = int(progress * 10) + 1
         diff_color = (
@@ -2189,7 +2104,6 @@ class GameWidget(Widget):
         )
 
     def _draw_combat_info_panel(self, s):
-        """Draw kill counter and enemy count in the top-right corner."""
         panel_w = 190 * s
         panel_h = 85 * s
         panel_x = self.width - panel_w - 16 * s
@@ -2201,18 +2115,15 @@ class GameWidget(Widget):
         Color(0.5, 0.35, 0.35, 0.45)
         Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.2)
 
-        # Kill count
         self._draw_outlined_text(
             f"Kills: {self.kill_count}", panel_x + pad, panel_y + panel_h - 28 * s,
             font_size=int(18 * s), color=(1, 0.85, 0.3, 1), bold=True
         )
-        # Enemy count
         total_enemies = len(self.enemies) + len(self.special_enemies)
         self._draw_outlined_text(
             f"Enemies: {total_enemies}", panel_x + pad, panel_y + panel_h - 52 * s,
             font_size=int(14 * s), color=(0.9, 0.5, 0.4, 0.9)
         )
-        # Orb count
         self._draw_outlined_text(
             f"Orbs: {len(self.exp_orbs)}", panel_x + pad, panel_y + panel_h - 72 * s,
             font_size=int(12 * s), color=(0.4, 0.95, 0.5, 0.8)
@@ -2229,7 +2140,6 @@ class GameWidget(Widget):
         )
 
     def _draw_skill_slots(self, s):
-        """Draw centered bottom skill slots with cooldown overlay and countdown numbers."""
         slot_count = len(self.skill_slots)
         slot_w = 88 * s
         slot_h = 88 * s
@@ -2280,6 +2190,11 @@ class GameWidget(Widget):
                 )
 
     def _update_debug(self, dt: float):
+        if not self.debug_mode:
+            self.debug_label.text = ""
+            self.pos_label.text = ""
+            return
+            
         fps = Clock.get_fps() or 0
         god_str = "  [GODMODE ON]" if self.god_mode else ""
         info = (
@@ -2317,9 +2232,8 @@ class GameWidget(Widget):
         self.debug_label.text = info
         if self.debug_mode:
             self.pos_label.text = f"Player: ({self.player.x:.1f}, {self.player.y:.1f})"
-            self.pos_label.pos = (self.width - 220, self.height - 40)
-        else:
-            self.pos_label.text = ""
+            if self.pos_label.texture:
+                self.pos_label.pos = (self.width - self.pos_label.texture.width - 20, self.height - self.pos_label.texture.height - 20)
 
     def _spawn_bullet(self):
         mx, my = Window.mouse_pos
@@ -2332,10 +2246,8 @@ class GameWidget(Widget):
         if raw_direction.length() == 0:
             raw_direction = Vector(self.player.facing, 0)
 
-        # Face left/right based on cursor
         self.player.facing = 1 if raw_direction.x >= 0 else -1
 
-        # Clamp aim to a 160-degree cone around facing direction (±80°)
         aim_angle = math.degrees(math.atan2(raw_direction.y, raw_direction.x))
         if self.player.facing == 1:
             clamped_angle = max(-80.0, min(80.0, aim_angle))
@@ -2356,6 +2268,7 @@ class GameWidget(Widget):
         bullet.damage = self.player.bullet_damage * (1.75 if is_crit else 1.0)
         bullet.is_crit = is_crit
         self.bullets.append(bullet)
+        self.play_sound("gunshot")
 
     def _grant_player_exp(self, amount: int):
         levels_gained = self.player.add_experience(amount)
@@ -2447,20 +2360,16 @@ class GameWidget(Widget):
             self.levelup_choices = []
 
     def _draw_levelup_overlay(self):
-        """Draw an enhanced level-up selection overlay with card UI."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
 
-        # Full-screen dark overlay
         Color(0, 0, 0, 0.6)
         Rectangle(pos=(0, 0), size=self.size)
 
-        # Central panel
         panel_w = self.width * 0.55
         panel_h = self.height * 0.52
         panel_x = (self.width - panel_w) / 2
         panel_y = (self.height - panel_h) / 2
 
-        # Panel background layers
         Color(0.08, 0.07, 0.14, 0.95)
         RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[20 * s])
         inner_pad = 4 * s
@@ -2470,11 +2379,9 @@ class GameWidget(Widget):
             size=(panel_w - inner_pad * 2, panel_h - inner_pad * 2),
             radius=[16 * s]
         )
-        # Golden border
         Color(0.85, 0.7, 0.2, 0.8)
         Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 20 * s), width=2.5)
 
-        # Title
         title_y = panel_y + panel_h - 55 * s
         self._draw_outlined_text(
             "LEVEL UP!", self.width / 2, title_y,
@@ -2482,7 +2389,6 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        # Subtitle
         subtitle_y = title_y - 35 * s
         remaining_text = f"({self.pending_levelups} more)" if self.pending_levelups > 0 else ""
         self._draw_outlined_text(
@@ -2491,12 +2397,10 @@ class GameWidget(Widget):
             anchor_x='center', anchor_y='center'
         )
 
-        # Separator line
         sep_y = subtitle_y - 20 * s
         Color(0.5, 0.45, 0.6, 0.4)
         Line(points=[panel_x + 40 * s, sep_y, panel_x + panel_w - 40 * s, sep_y], width=1)
 
-        # Option cards
         stat_descriptions = {
             "str": ("STR", "+1", "Bullet Damage +", (0.95, 0.35, 0.3, 1)),
             "dex": ("DEX", "+1", "Fire Rate +", (0.3, 0.85, 0.95, 1)),
@@ -2520,14 +2424,11 @@ class GameWidget(Widget):
                 stat_key, (stat_key.upper(), "+1", "", (1, 1, 1, 1))
             )
 
-            # Card background
             Color(0.1, 0.1, 0.18, 0.92)
             RoundedRectangle(pos=(cx, card_y), size=(card_w, card_h), radius=[12 * s])
-            # Card border
             Color(*accent[:3], 0.6)
             Line(rounded_rectangle=(cx, card_y, card_w, card_h, 12 * s), width=1.8)
 
-            # Key number hint
             key_y = card_y + card_h - 35 * s
             Color(*accent[:3], 0.15)
             Ellipse(pos=(cx + card_w / 2 - 18 * s, key_y - 4 * s), size=(36 * s, 36 * s))
@@ -2537,28 +2438,24 @@ class GameWidget(Widget):
                 anchor_x='center', anchor_y='center', bold=True
             )
 
-            # Stat name
             self._draw_outlined_text(
                 stat_name, cx + card_w / 2, key_y - 40 * s,
                 font_size=int(28 * s), color=accent,
                 anchor_x='center', anchor_y='center', bold=True
             )
 
-            # Bonus text
             self._draw_outlined_text(
                 bonus, cx + card_w / 2, key_y - 72 * s,
                 font_size=int(20 * s), color=(0.9, 0.9, 0.9, 0.9),
                 anchor_x='center', anchor_y='center'
             )
 
-            # Description
             self._draw_outlined_text(
                 desc, cx + card_w / 2, key_y - 102 * s,
                 font_size=int(14 * s), color=(0.7, 0.7, 0.75, 0.8),
                 anchor_x='center', anchor_y='center'
             )
 
-            # Current value
             current_val = getattr(self.player, stat_key, 0)
             self._draw_outlined_text(
                 f"Current: {current_val}", cx + card_w / 2, card_y + 20 * s,
@@ -2566,7 +2463,6 @@ class GameWidget(Widget):
                 anchor_x='center', anchor_y='bottom'
             )
 
-        # Bottom hint
         self._draw_outlined_text(
             "Click or Press  1  /  2  /  3  to select", self.width / 2, panel_y + 8 * s,
             font_size=int(16 * s), color=(0.7, 0.7, 0.75, 0.7),
@@ -2574,7 +2470,6 @@ class GameWidget(Widget):
         )
 
     def _draw_boss_upgrade_overlay(self):
-        """Boss reward selection overlay (powerful x1.5 upgrade choice)."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
 
         Color(0, 0, 0, 0.68)
@@ -2663,7 +2558,6 @@ class GameWidget(Widget):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
 
-        # Re-apply persistent boss multipliers on top of recalculated base stats
         base_walk_speed = self.player.base_walk_speed + (self.player.agi - 1) * 8
         base_run_speed = self.player.base_run_speed + (self.player.agi - 1) * 10
         self.player.speed = base_walk_speed * self.boss_move_speed_mult
@@ -2675,7 +2569,6 @@ class GameWidget(Widget):
         self.player.hp = max(1.0, min(self.player.max_hp, self.player.max_hp * hp_ratio))
 
     def _resume_auto_fire_if_holding(self):
-        """Resume AUTO fire when reload finishes while left mouse is still held."""
         if not self.left_mouse_held or self.levelup_active or self.player.is_dead:
             return
 
@@ -2692,8 +2585,9 @@ class GameWidget(Widget):
             return
 
         if getattr(self.player, 'ammo', 0) <= 0 and not has_infinite_ammo:
-            if hasattr(self.player, 'start_reload'):
+            if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                 self.player.start_reload()
+                self.play_sound("reload")
             return
 
         self.firing = True
@@ -2861,6 +2755,7 @@ class GameWidget(Widget):
         return True
 
     def _cast_grenade(self) -> bool:
+        self.play_sound("grenade")
         mx, my = Window.mouse_pos
         target = Vector(*self.to_widget(mx, my))
         pbox = self.player.get_hitbox()
@@ -2924,9 +2819,12 @@ class GameWidget(Widget):
             self.boss_upgrade_choices = []
 
     def _cast_shockwave(self) -> bool:
+        self.play_sound("shockwave")
         center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
         radius = (300.0 + (self.player.int * 8.0)) * 3.0
         push_power = 220.0 + (self.player.int * 5.0)
+
+        self.shockwave_effects.append(ShockwaveEffect(center, radius))
 
         height = self.height if self.height > 0 else Window.height
         block_unit = height / 10.0
@@ -2959,6 +2857,7 @@ class GameWidget(Widget):
         return True
 
     def _cast_ultimate(self) -> bool:
+        self.play_sound("ult")
         center = Vector(self.player.pos.x + self.player.size[0] / 2, self.player.pos.y + self.player.size[1] / 2)
         visual_radius = 185.0 + (self.player.int * 6.0)
 
@@ -2970,9 +2869,10 @@ class GameWidget(Widget):
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
-                textures=self.grenade_explosion_textures,
-                size=max(170.0, visual_radius * 1.8),
+                textures=None,
+                size=max(170.0, visual_radius * 2.5),
                 y_lift_ratio=0.45,
+                color=(0.2, 0.8, 1.0, 0.8)
             )
         )
 
@@ -3010,6 +2910,7 @@ class GameWidget(Widget):
             )
         )
 
+        hit_any = False
         for enemy in self.enemies[:]:
             if enemy.is_dying:
                 continue
@@ -3018,6 +2919,7 @@ class GameWidget(Widget):
             if (center - blast_center).length() <= grenade.blast_radius:
                 enemy_died = enemy.take_damage(grenade.damage)
                 self._apply_lifesteal(grenade.damage)
+                hit_any = True
                 if enemy_died:
                     self._handle_enemy_kill(enemy)
 
@@ -3029,8 +2931,12 @@ class GameWidget(Widget):
             if (center - blast_center).length() <= grenade.blast_radius:
                 enemy_died = enemy.take_damage(grenade.damage)
                 self._apply_lifesteal(grenade.damage)
+                hit_any = True
                 if enemy_died:
                     self._handle_enemy_kill(enemy)
+                    
+        if hit_any:
+            self.play_sound("enemy_hit")
 
     def _drop_boss_orb(self, enemy):
         hitbox = enemy.get_hitbox()
@@ -3039,25 +2945,18 @@ class GameWidget(Widget):
         self.boss_orbs.append(BossOrb(center + offset))
 
     def _update_progression_hud(self):
-        """Progression HUD is now drawn on canvas in _draw_hud_panel. Keep label cleared."""
         self.progression_label.text = ""
 
     def _spawn_enemy(self):
-        """Spawn enemy at random edge (left or right) within the player's walkable band."""
-        # Don't spawn if at max capacity
         if len(self.enemies) >= self.MAX_ENEMIES:
             return
 
         spawn_left = random.choice([True, False])
-
-        # Spawn only in the same Y band that player can reach.
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
-
         enemy_width = self.player.size[0]
         x_pos = self._get_enemy_offscreen_x(enemy_width, spawn_left)
 
-        # Spawn enemy with size relative to player (scale_to_player=1.0 = same size)
         self.enemies.append(EnemyEntity(
             pos=Vector(x_pos, y_pos),
             player_size=self.player.size,
@@ -3067,30 +2966,21 @@ class GameWidget(Widget):
         self.enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy(self):
-        """Spawn special enemy at random edge. Must not repeat last 2 types spawned. No max limit."""
-        # Get available types (exclude last 2 spawned)
         available = [s for s in SpecialEnemyEntity.SKINS if s not in self.last_special_types]
         if not available:
-            # Fallback if all excluded (shouldn't happen with 3 types and tracking 2)
             available = SpecialEnemyEntity.SKINS
 
         selected = random.choice(available)
-
-        # Update last 2 tracking
         self.last_special_types.append(selected)
         if len(self.last_special_types) > 2:
             self.last_special_types.pop(0)
 
-        # Spawn at random edge (same logic as basic enemy)
         spawn_left = random.choice([True, False])
-
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
-
         special_enemy_width = self.player.size[0] * 1.2
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
-        # Spawn special enemy with selected type
         special_index = len(self.special_enemies) + 1
         if special_index > 3:
             special_index = 3
@@ -3104,12 +2994,9 @@ class GameWidget(Widget):
         self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy_by_type(self, enemy_type: str):
-        """Spawn a specific special enemy type at random edge (for debug mode)."""
         spawn_left = random.choice([True, False])
-
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
-
         special_enemy_width = self.player.size[0] * 1.2
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
