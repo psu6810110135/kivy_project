@@ -238,7 +238,8 @@ class ShockwaveEffect:
         self.radius = self.max_radius * (1.0 - (1.0 - progress)**3)
 
     def draw(self, canvas):
-        if self.done: return
+        if self.done:
+            return
         alpha = max(0.0, 1.0 - (self.age / self.lifetime))
         with canvas:
             Color(1.0, 0.9, 0.2, alpha) # Yellow radiating wave
@@ -293,6 +294,7 @@ class ExplosionEffect:
                 Color(*self.color)
                 Ellipse(pos=(draw_center.x - self.size / 2, draw_center.y - self.size / 2), size=(self.size, self.size))
 
+
 class GameWidget(Widget):
     MAX_ENEMIES = 100  # Limit to prevent lag
     GAME_DURATION = 15 * 60  # 15 minutes in seconds
@@ -314,6 +316,7 @@ class GameWidget(Widget):
 
         self.player = PlayerEntity(pos=Vector(0, 0))
         self._did_initial_player_center = False
+        
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
         self.enemy_spawn_counter = 0
@@ -365,7 +368,7 @@ class GameWidget(Widget):
         # Enemy projectiles (Kitsune's fire)
         self.enemy_projectiles: List[EnemyProjectileEntity] = []
 
-        # Front-end flow states (Phase D)
+        # Front-end flow states
         self.game_state = initial_state
         self.settings_return_state = self.STATE_MAIN_MENU
         self.loading_progress = 0.0
@@ -393,9 +396,21 @@ class GameWidget(Widget):
         self._keyboard = Window.request_keyboard(self._on_keyboard_closed, self)
         self._keyboard.bind(on_key_down=self._on_key_down, on_key_up=self._on_key_up)
         self.pressed_keys: Set[str] = set()
+        
+        # Labels for UI
         self.debug_label = Label(text="", pos=(10, 10), halign="left", valign="bottom")
         self.pos_label = Label(text="", halign="right", valign="top")
         self.progression_label = Label(text="", halign="left", valign="top")
+        self.timer_label = Label(text="15:00", font_size=48, halign="center", valign="middle")
+        self.timer_label.color = (1, 1, 1, 1)  # White
+        self.timer_label.bold = True
+        self.timer_label.opacity = 0  # Timer drawn on canvas
+        
+        self.add_widget(self.timer_label)
+        self.add_widget(self.debug_label)
+        self.add_widget(self.pos_label)
+        self.add_widget(self.progression_label)
+        
         self.debug_mode = False
         self.god_mode = False  # Player invincibility (debug key 8)
         self.bullet_damage = self.player.bullet_damage
@@ -420,9 +435,9 @@ class GameWidget(Widget):
         # Sounds
         self.sounds = {
             "bg_music": SoundLoader.load("game_sounds/BGmusic..mp3"),
-            "gunshot": SoundLoader.load("game_sounds/GunShot.mp3"),
+            "gunshot": SoundLoader.load("game_sounds/EnemyHitSound.wav"),
             "reload": SoundLoader.load("game_sounds/Reload.mp3"),
-            "enemy_hit": SoundLoader.load("game_sounds/EnemyHitSound.wav"),
+            "enemy_hit": SoundLoader.load("game_sounds/GunShot.mp3"),
             "player_hit": SoundLoader.load("game_sounds/PlayerDamaged.mp3"),
             "grenade": SoundLoader.load("game_sounds/Grenade.mp3"),
             "shockwave": SoundLoader.load("game_sounds/Shockwave.mp3"),
@@ -455,6 +470,7 @@ class GameWidget(Widget):
         self.ultimate_kill_progress = 0
         self.ultimate_infinite_ammo_duration = 15.0
         self.ultimate_infinite_ammo_timer = 0.0
+        
         self.balance_preset_order = ["conservative", "balanced", "generous"]
         self.balance_presets = self._build_balance_presets()
         self.auto_balance_progression = True
@@ -504,22 +520,11 @@ class GameWidget(Widget):
         # Game timer
         self.game_time = 0.0
         self.time_speed_multiplier = 1.0  # Normal speed, can be increased in debug mode
-        self.timer_label = Label(text="15:00", font_size=48, halign="center", valign="middle")
-        self.timer_label.color = (1, 1, 1, 1)  # White
-        self.timer_label.bold = True
-        self.timer_label.opacity = 0  # Timer drawn on canvas
-        self.add_widget(self.timer_label)
-
-        self.add_widget(self.debug_label)
-        self.add_widget(self.pos_label)
-        self.progression_label.opacity = 0  # HUD drawn on canvas
-        self.add_widget(self.progression_label)
-
+        
         self.kill_count = 0
         self.coins = 0
 
         self._sync_combat_from_player()
-
         self._spawn_player_at_screen_center()
 
         self._scheduled_update = Clock.schedule_interval(self.update, 1 / 60)
@@ -1006,6 +1011,7 @@ class GameWidget(Widget):
                     self.player.start_reload()
                     self.play_sound("reload")
             return True
+            
         return super().on_touch_down(touch)
 
     def on_touch_up(self, touch):
@@ -1203,24 +1209,28 @@ class GameWidget(Widget):
             bullet_box = b.get_hitbox()
             hit = False
             for enemy in self.enemies[:]:
-                if enemy.is_dying: continue
+                if enemy.is_dying: 
+                    continue
                 if self._rects_intersect(bullet_box, enemy.get_hitbox()):
                     bullet_damage = getattr(b, "damage", self.bullet_damage)
                     enemy_died = enemy.take_damage(bullet_damage)
                     self._apply_lifesteal(bullet_damage)
                     self.play_sound("enemy_hit")
-                    if enemy_died: self._handle_enemy_kill(enemy)
+                    if enemy_died: 
+                        self._handle_enemy_kill(enemy)
                     hit = True
                     break
             if not hit:
                 for se in self.special_enemies[:]:
-                    if se.is_dying: continue
+                    if se.is_dying: 
+                        continue
                     if self._rects_intersect(bullet_box, se.get_hitbox()):
                         bullet_damage = getattr(b, "damage", self.bullet_damage)
                         enemy_died = se.take_damage(bullet_damage)
                         self._apply_lifesteal(bullet_damage)
                         self.play_sound("enemy_hit")
-                        if enemy_died: self._handle_enemy_kill(se)
+                        if enemy_died: 
+                            self._handle_enemy_kill(se)
                         hit = True
                         break
             if hit and b in self.bullets:
@@ -1234,11 +1244,13 @@ class GameWidget(Widget):
 
         for effect in self.explosion_effects[:]:
             effect.update(dt)
-            if effect.done: self.explosion_effects.remove(effect)
+            if effect.done: 
+                self.explosion_effects.remove(effect)
 
         for effect in self.shockwave_effects[:]:
             effect.update(dt)
-            if effect.done: self.shockwave_effects.remove(effect)
+            if effect.done: 
+                self.shockwave_effects.remove(effect)
         
         for proj in self.enemy_projectiles[:]:
             proj.update(dt)
@@ -1253,7 +1265,8 @@ class GameWidget(Widget):
                             break
                     self.player.take_damage(fire_damage)
                     self.play_sound("player_hit")
-                if not hasattr(self, 'player_hit_flash'): self.player_hit_flash = 0.0
+                if not hasattr(self, 'player_hit_flash'): 
+                    self.player_hit_flash = 0.0
                 self.player_hit_flash = 0.3
                 self.enemy_projectiles.remove(proj)
                 continue
@@ -1262,6 +1275,7 @@ class GameWidget(Widget):
 
         pull_radius = self._get_exp_pull_radius()
         pickup_box = self._inflate_rect(self.player.get_hitbox(), self.exp_pickup_radius * self.passive_pickup_radius_mult)
+        
         for orb in self.exp_orbs[:]:
             orb.update(dt, player_center, pull_radius)
             if self._rects_intersect(orb.get_hitbox(), pickup_box):
@@ -1302,18 +1316,23 @@ class GameWidget(Widget):
 
         if not self.player.is_dead:
             for enemy in self.enemies + self.special_enemies:
-                if enemy.is_dying: continue
-                if not getattr(enemy, 'is_attacking', False): continue
-                if enemy.damage_cooldown > 0: continue
+                if enemy.is_dying: 
+                    continue
+                if not getattr(enemy, 'is_attacking', False): 
+                    continue
+                if enemy.damage_cooldown > 0: 
+                    continue
                 attack_box = enemy.get_attack_hitbox()
-                if attack_box is None: continue
+                if attack_box is None: 
+                    continue
                 pbox = self.player.get_hitbox()
                 if self._rects_intersect(attack_box, pbox):
                     if self._can_player_take_damage():
                         self.player.take_damage(enemy.damage)
                         self.play_sound("player_hit")
                     enemy.damage_cooldown = getattr(enemy, 'attack_anim_speed', 0.1) * 3
-                    if not hasattr(self, 'player_hit_flash'): self.player_hit_flash = 0.0
+                    if not hasattr(self, 'player_hit_flash'): 
+                        self.player_hit_flash = 0.0
                     self.player_hit_flash = 0.3
 
         self.enemies = [e for e in self.enemies if not e.death_anim_done]
@@ -1364,7 +1383,8 @@ class GameWidget(Widget):
             cx = int((enemy.pos.x + enemy.size[0] / 2) / cell_size)
             cy = int((enemy.pos.y + enemy.size[1] / 2) / cell_size)
             key = (cx, cy)
-            if key not in grid: grid[key] = []
+            if key not in grid: 
+                grid[key] = []
             grid[key].append(enemy)
 
         for (cx, cy), cell_enemies in grid.items():
@@ -1404,6 +1424,7 @@ class GameWidget(Widget):
         e2.pos += move
 
     def _get_enemy_render_order(self):
+        """Render order: danger first to front, then Y-sort, then stable spawn tie-break."""
         all_enemies = self.enemies + self.special_enemies
 
         def sort_key(enemy):
@@ -1437,22 +1458,44 @@ class GameWidget(Widget):
         with self.canvas:
             Color(1, 1, 1, 1)
             Rectangle(texture=self.bg_texture, pos=(0, 0), size=self.size)
+
             self.player.draw(self.canvas)
             Color(1, 1, 1, 1)
 
-            for enemy in self._get_enemy_render_order(): enemy.draw(self.canvas)
-            for b in self.bullets: b.draw(self.canvas)
-            for grenade in self.grenades: grenade.draw(self.canvas)
-            for effect in self.explosion_effects: effect.draw(self.canvas)
-            for effect in self.shockwave_effects: effect.draw(self.canvas)
-            for orb in self.exp_orbs: orb.draw(self.canvas)
-            for boss_orb in self.boss_orbs: boss_orb.draw(self.canvas)
-            for health_orb in self.health_orbs: health_orb.draw(self.canvas)
-            for proj in self.enemy_projectiles: proj.draw(self.canvas)
+            for enemy in self._get_enemy_render_order():
+                enemy.draw(self.canvas)
+
+            for b in self.bullets:
+                b.draw(self.canvas)
+
+            for grenade in self.grenades:
+                grenade.draw(self.canvas)
+
+            for effect in self.explosion_effects:
+                effect.draw(self.canvas)
+
+            for effect in self.shockwave_effects:
+                effect.draw(self.canvas)
+
+            for orb in self.exp_orbs:
+                orb.draw(self.canvas)
+
+            for boss_orb in self.boss_orbs:
+                boss_orb.draw(self.canvas)
+
+            for health_orb in self.health_orbs:
+                health_orb.draw(self.canvas)
+
+            for proj in self.enemy_projectiles:
+                proj.draw(self.canvas)
 
             self._draw_game_ui()
-            if self.levelup_active: self._draw_levelup_overlay()
-            if self.boss_upgrade_active: self._draw_boss_upgrade_overlay()
+
+            if self.levelup_active:
+                self._draw_levelup_overlay()
+
+            if self.boss_upgrade_active:
+                self._draw_boss_upgrade_overlay()
 
             if self.debug_mode and self.game_state == self.STATE_PLAYING:
                 Color(1, 0, 0, 0.8)
@@ -1514,6 +1557,7 @@ class GameWidget(Widget):
                 self._draw_debug_entity_stats()
 
     def _draw_debug_entity_stats(self):
+        """Draw HP / DMG / SPD / Cooldown text above each entity in debug mode."""
         phx, phy, phw, phh = self.player.get_hitbox()
         p_info = (f"HP:{self.player.hp}/{self.player.max_hp}  FireRate:{self.fire_rate:.2f}s  SPD:{self.player.speed}")
         self._draw_label_at(p_info, phx + phw / 2, phy + phh + 80, (0, 1, 0.5, 1))
@@ -1537,6 +1581,7 @@ class GameWidget(Widget):
             self._draw_label_at(se_info, shx + shw / 2, shy + shh + 85, (0.8, 0.3, 1, 1))
 
     def _draw_label_at(self, text: str, cx: float, y: float, color_tuple=(1, 1, 1, 1)):
+        """Render a small debug label centered at (cx, y) on the canvas with outline."""
         outline_color = (0, 0, 0, 1)
         outline_lbl = CoreLabel(text=text, font_size=30, color=outline_color)
         outline_lbl.refresh()
@@ -1557,7 +1602,8 @@ class GameWidget(Widget):
                 Rectangle(texture=tex, pos=(x, y), size=(w, h))
 
     def _draw_timer(self):
-        remaining = self.GAME_DURATION - self.game_time
+        """Draw the timer text on the canvas at the top center."""
+        remaining = max(0, self.GAME_DURATION - self.game_time)
         minutes = int(remaining // 60)
         seconds = int(remaining % 60)
         self.timer_label.text = f"{minutes:02d}:{seconds:02d}"
@@ -1571,17 +1617,25 @@ class GameWidget(Widget):
             Rectangle(texture=texture, pos=(x, y), size=(label_w, label_h))
 
     def _draw_outlined_text(self, text, x, y, font_size=24, color=(1, 1, 1, 1), anchor_x='left', anchor_y='bottom', bold=False):
+        """Draw text with dark outline at the specified position. Returns (w, h)."""
         lbl = CoreLabel(text=text, font_size=font_size, color=color, bold=bold)
         lbl.refresh()
         tex = lbl.texture
-        if not tex: return (0, 0)
+        if not tex:
+            return (0, 0)
         w, h = tex.size
         draw_x, draw_y = x, y
-        if anchor_x == 'center': draw_x = x - w / 2
-        elif anchor_x == 'right': draw_x = x - w
-        if anchor_y == 'center': draw_y = y - h / 2
-        elif anchor_y == 'top': draw_y = y - h
         
+        if anchor_x == 'center':
+            draw_x = x - w / 2
+        elif anchor_x == 'right':
+            draw_x = x - w
+            
+        if anchor_y == 'center':
+            draw_y = y - h / 2
+        elif anchor_y == 'top':
+            draw_y = y - h
+            
         shadow = CoreLabel(text=text, font_size=font_size, color=(0, 0, 0, 1), bold=bold)
         shadow.refresh()
         stex = shadow.texture
@@ -1594,7 +1648,8 @@ class GameWidget(Widget):
         return (w, h)
 
     def _draw_texture_centered(self, texture, center_x: float, center_y: float, scale: float = 1.0, alpha: float = 1.0):
-        if texture is None: return None
+        if texture is None:
+            return None
         width = texture.width * scale
         height = texture.height * scale
         x = center_x - width / 2
@@ -1604,7 +1659,8 @@ class GameWidget(Widget):
         return (x, y, width, height)
 
     def _draw_texture_fill_width(self, texture, x: float, y: float, width: float, height: float, alpha: float = 1.0):
-        if texture is None or width <= 0 or height <= 0: return
+        if texture is None or width <= 0 or height <= 0:
+            return
         Color(1, 1, 1, alpha)
         Rectangle(texture=texture, pos=(x, y), size=(width, height))
 
@@ -1663,25 +1719,29 @@ class GameWidget(Widget):
             Rectangle(texture=self.menu_bg_texture, pos=(0, 0), size=self.size)
             Color(0, 0, 0, 0.4)
             Rectangle(pos=(0, 0), size=self.size)
-
-            self._draw_outlined_text("KIVY 2.5D SHOOTER", self.width * 0.5, self.height * 0.8, font_size=int(68 * s), color=(0.95, 0.9, 0.3, 1), anchor_x='center', anchor_y='center', bold=True)
-            self._draw_outlined_text("Survive 15:00 • Build your soldier", self.width * 0.5, self.height * 0.73, font_size=int(24 * s), color=(0.92, 0.92, 0.96, 0.95), anchor_x='center', anchor_y='center')
-
-            start_y = self.height * 0.56
-            gap = 165 * s
+            
+            # --- BIGGER MAIN MENU ---
+            self._draw_outlined_text("Zombie Slayer : The Last Stand", self.width * 0.5, self.height * 0.82, font_size=int(96 * s), color=(1, 0.9, 0.3, 1), anchor_x='center', anchor_y='center', bold=True)
+            self._draw_outlined_text("Survive 15:00 • Build your soldier", self.width * 0.5, self.height * 0.74, font_size=int(32 * s), color=(0.92, 0.92, 0.96, 0.95), anchor_x='center', anchor_y='center')
+            
+            start_y = self.height * 0.58
+            gap = 190 * s
+            button_scale = 1.45 * s
+            
             button_defs = [
                 ("play", self.ui_textures.get("main_btn_play")),
                 ("settings", self.ui_textures.get("main_btn_settings")),
                 ("exit", self.ui_textures.get("main_btn_exit")),
             ]
+            
             for idx, (action, texture) in enumerate(button_defs):
                 by = start_y - idx * gap
                 fallback = (self.width * 0.5 - 330 * s, by - 64 * s, 660 * s, 128 * s)
-                self._draw_texture_centered(self.ui_textures.get("main_btn_shadow"), self.width * 0.5, by - 7 * s, 1.02 * s, 0.95)
-                self._draw_texture_centered(self.ui_textures.get("main_btn_bg"), self.width * 0.5, by, 1.02 * s)
-                rect = self._draw_texture_centered(texture, self.width * 0.5, by, 1.02 * s) or fallback
+                self._draw_texture_centered(self.ui_textures.get("main_btn_shadow"), self.width * 0.5, by - 7 * s, button_scale, 0.95)
+                self._draw_texture_centered(self.ui_textures.get("main_btn_bg"), self.width * 0.5, by, button_scale)
+                rect = self._draw_texture_centered(texture, self.width * 0.5, by, button_scale) or fallback
                 self.main_menu_buttons.append({"action": action, "rect": rect})
-
+                
         if draw_settings and self.game_state == self.STATE_SETTINGS:
             self._draw_settings_overlay()
 
@@ -1901,13 +1961,18 @@ class GameWidget(Widget):
         return False
 
     def _draw_game_ui(self):
-        s = self.height / 1080.0 if self.height > 0 else 1.0
+        """Main UI orchestrator — draws all HUD elements on canvas."""
+        # --- BIGGER GAME UI SCALE ---
+        s = (self.height / 1080.0) * 1.15 if self.height > 0 else 1.15
+        
+        # Low HP warning vignette
         if not self.player.is_dead and self.player.max_hp > 0:
             hp_ratio = self.player.hp / self.player.max_hp
             if hp_ratio < 0.3:
                 pulse = 0.08 + 0.06 * math.sin(self.game_time * 5)
                 Color(0.7, 0, 0, pulse)
                 Rectangle(pos=(0, 0), size=self.size)
+                
         self._draw_hud_panel(s)
         self._draw_timer_panel(s)
         self._draw_combat_info_panel(s)
@@ -1915,6 +1980,7 @@ class GameWidget(Widget):
         self._draw_skill_slots(s)
 
     def _draw_ammo_panel(self, s):
+        """Draw the ammo counter prominently at the bottom right of the screen."""
         ammo = getattr(self.player, 'ammo', 30)
         max_ammo = getattr(self.player, 'max_ammo', 30)
         is_reloading = getattr(self.player, 'is_reloading', False)
@@ -1933,307 +1999,170 @@ class GameWidget(Widget):
 
         self._draw_outlined_text(
             ammo_text, self.width - 40 * s, 40 * s,
-            font_size=int(32 * s), color=ammo_color,
+            font_size=int(42 * s), color=ammo_color,
             anchor_x='right', anchor_y='bottom', bold=True
         )
 
         mode = getattr(self.player, 'firing_mode', 'AUTO')
         mode_text = f"Mode: {mode}"
         self._draw_outlined_text(
-            mode_text, self.width - 40 * s, 40 * s + 36 * s,
-            font_size=int(22 * s), color=(0.8, 0.9, 1.0, 0.9),
+            mode_text, self.width - 40 * s, 85 * s,
+            font_size=int(26 * s), color=(0.8, 0.9, 1.0, 0.9),
             anchor_x='right', anchor_y='bottom', bold=True
         )
 
     def _draw_hud_panel(self, s):
-        pad = 16 * s
-        panel_x = 16 * s
-        panel_w = 400 * s
-        panel_h = 150 * s
-        panel_y = self.height - panel_h - 16 * s
+        """Draw the player status HUD panel in the top-left corner."""
+        pad = 20 * s
+        panel_w = 480 * s
+        panel_h = 180 * s
+        panel_x = 20 * s
+        panel_y = self.height - panel_h - 20 * s
 
-        Color(0.05, 0.05, 0.12, 0.75)
-        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[12 * s])
-        Color(0.45, 0.42, 0.55, 0.5)
-        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 12 * s), width=1.5)
+        # Panel background
+        Color(0.05, 0.05, 0.12, 0.8)
+        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[15 * s])
+        Color(0.5, 0.5, 0.7, 0.5)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 15 * s), width=2)
 
-        badge_x = panel_x + pad
-        badge_y = panel_y + panel_h - 36 * s
-        badge_r = 16 * s
-        Color(0.85, 0.7, 0.15, 0.9)
-        Ellipse(pos=(badge_x, badge_y), size=(badge_r * 2, badge_r * 2))
+        # ── Level text ──
         self._draw_outlined_text(
-            f"{self.player.level}", badge_x + badge_r, badge_y + badge_r,
-            font_size=int(16 * s), color=(0.1, 0.05, 0, 1),
-            anchor_x='center', anchor_y='center', bold=True
-        )
-        self._draw_outlined_text(
-            f"LV {self.player.level}", badge_x + badge_r * 2 + 8 * s, badge_y + 6 * s,
-            font_size=int(20 * s), color=(1, 0.92, 0.5, 1), bold=True
+            f"LV {self.player.level}", panel_x + pad, panel_y + panel_h - 35 * s,
+            font_size=int(32 * s), color=(1, 0.9, 0.4, 1), anchor_x='left', anchor_y='center', bold=True
         )
         if self.player.stat_points > 0:
             self._draw_outlined_text(
-                f"+{self.player.stat_points} SP", panel_x + panel_w - pad, badge_y + 6 * s,
-                font_size=int(16 * s), color=(0.3, 1, 0.5, 1),
-                anchor_x='right', bold=True
+                f"+{self.player.stat_points} SP", panel_x + panel_w - pad, panel_y + panel_h - 35 * s,
+                font_size=int(24 * s), color=(0, 1, 0.5, 1), anchor_x='right', anchor_y='center', bold=True
             )
 
+        # ── HP Bar ──
         bar_x = panel_x + pad
         bar_w = panel_w - pad * 2
-        bar_h = 22 * s
-        hp_bar_y = panel_y + panel_h - 68 * s
+        bar_h = 30 * s
+        hp_bar_y = panel_y + panel_h - 75 * s
 
-        heart_size = 18 * s
-        Color(0.9, 0.15, 0.15, 1)
-        Ellipse(pos=(bar_x, hp_bar_y + (bar_h - heart_size) / 2), size=(heart_size, heart_size))
-        hp_bar_x = bar_x + heart_size + 6 * s
-        hp_bar_w = bar_w - heart_size - 6 * s
-
-        Color(0.2, 0.08, 0.08, 0.9)
-        RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(hp_bar_w, bar_h), radius=[4 * s])
+        Color(0.2, 0.0, 0.0, 1)
+        RoundedRectangle(pos=(bar_x, hp_bar_y), size=(bar_w, bar_h), radius=[5 * s])
         hp_ratio = max(0, min(1, self.player.hp / self.player.max_hp)) if self.player.max_hp > 0 else 0
-        fill_w = hp_bar_w * hp_ratio
+        fill_w = bar_w * hp_ratio
         if fill_w > 1:
-            if hp_ratio > 0.5:
-                Color(0.15, 0.78, 0.25, 0.95)
-            elif hp_ratio > 0.25:
-                Color(0.95, 0.75, 0.1, 0.95)
-            else:
-                Color(0.88, 0.12, 0.12, 0.95)
-            RoundedRectangle(pos=(hp_bar_x, hp_bar_y), size=(fill_w, bar_h), radius=[4 * s])
+            Color(0.2, 0.8, 0.3, 1)
+            RoundedRectangle(pos=(bar_x, hp_bar_y), size=(fill_w, bar_h), radius=[5 * s])
+            
         self._draw_outlined_text(
-            f"{int(self.player.hp)}/{int(self.player.max_hp)}",
-            hp_bar_x + hp_bar_w / 2, hp_bar_y + bar_h / 2,
-            font_size=int(14 * s), color=(1, 1, 1, 1),
+            f"{int(self.player.hp)} / {int(self.player.max_hp)}",
+            bar_x + bar_w / 2, hp_bar_y + bar_h / 2,
+            font_size=int(22 * s), color=(1, 1, 1, 1),
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        exp_bar_y = hp_bar_y - 18 * s
-        exp_bar_h = 12 * s
-        Color(0.08, 0.08, 0.18, 0.9)
-        RoundedRectangle(pos=(bar_x, exp_bar_y), size=(bar_w, exp_bar_h), radius=[3 * s])
+        # ── EXP Bar ──
+        exp_bar_y = hp_bar_y - 45 * s
+        exp_bar_h = bar_h * 0.6
+        Color(0.0, 0.1, 0.2, 1)
+        RoundedRectangle(pos=(bar_x, exp_bar_y), size=(bar_w, exp_bar_h), radius=[5 * s])
         exp_ratio = (self.player.exp / self.player.next_exp) if self.player.next_exp > 0 else 0
         exp_fill_w = bar_w * max(0, min(1, exp_ratio))
         if exp_fill_w > 1:
-            Color(0.95, 0.8, 0.15, 0.9)
-            RoundedRectangle(pos=(bar_x, exp_bar_y), size=(exp_fill_w, exp_bar_h), radius=[3 * s])
+            Color(0.9, 0.8, 0.1, 1)
+            RoundedRectangle(pos=(bar_x, exp_bar_y), size=(exp_fill_w, exp_bar_h), radius=[5 * s])
+            
         self._draw_outlined_text(
-            f"EXP {int(self.player.exp)}/{int(self.player.next_exp)}",
+            f"EXP {int(self.player.exp)} / {int(self.player.next_exp)}",
             bar_x + bar_w / 2, exp_bar_y + exp_bar_h / 2,
-            font_size=int(11 * s), color=(1, 0.95, 0.7, 1),
+            font_size=int(16 * s), color=(1, 1, 1, 1),
             anchor_x='center', anchor_y='center'
         )
 
-        stats_y = exp_bar_y - 20 * s
-        stats_text = (
-            f"STR {self.player.str}  DEX {self.player.dex}  AGI {self.player.agi}  "
-            f"INT {self.player.int}  VIT {self.player.vit}  LCK {self.player.luck}"
-        )
-        self._draw_outlined_text(
-            stats_text, bar_x, stats_y,
-            font_size=int(12 * s), color=(0.72, 0.72, 0.82, 0.85)
-        )
-
-        coin_y = panel_y - 12 * s
-        money_icon_tex = self.ui_textures.get("money_icon")
-        if money_icon_tex:
-            icon_sz = 28 * s
-            Color(1, 1, 1, 1)
-            Rectangle(texture=money_icon_tex, pos=(panel_x + pad, coin_y - icon_sz), size=(icon_sz, icon_sz))
-            self._draw_outlined_text(
-                f"{self.coins}", panel_x + pad + icon_sz + 6 * s, coin_y - icon_sz * 0.5,
-                font_size=int(18 * s), color=(1, 0.88, 0.2, 1),
-                anchor_y='center', bold=True
-            )
-        else:
-            self._draw_outlined_text(
-                f"Coins: {self.coins}", panel_x + pad, coin_y - 14 * s,
-                font_size=int(14 * s), color=(1, 0.88, 0.2, 1), bold=True
-            )
-
-        combat_y = stats_y - 18 * s
-        combat_text = (
-            f"DMG {self.player.bullet_damage:.1f}   "
-            f"Rate {self.player.fire_rate:.2f}s   "
-            f"Crit {self.player.crit_chance * 100:.0f}%"
-        )
-        self._draw_outlined_text(
-            combat_text, bar_x, combat_y,
-            font_size=int(11 * s), color=(0.6, 0.65, 0.72, 0.75)
-        )
-
     def _draw_timer_panel(self, s):
+        """Draw the timer text on the canvas at the top center."""
         remaining = max(0, self.GAME_DURATION - self.game_time)
         minutes = int(remaining // 60)
         seconds = int(remaining % 60)
-        timer_text = f"{minutes:02d}:{seconds:02d}"
-
-        panel_w = 180 * s
-        panel_h = 72 * s
-        panel_x = (self.width - panel_w) / 2
-        panel_y = self.height - panel_h - 12 * s
-
-        Color(0.05, 0.05, 0.12, 0.78)
-        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[10 * s])
-        if remaining > 300:
-            Color(0.4, 0.4, 0.55, 0.6)
-        elif remaining > 60:
-            Color(0.9, 0.75, 0.15, 0.7)
-        else:
-            Color(0.9, 0.2, 0.15, 0.8)
-        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.5)
-
-        timer_color = (1, 1, 1, 1) if remaining > 60 else (1, 0.4, 0.3, 1)
+        
+        pw, ph = 220 * s, 90 * s
+        px, py = (self.width - pw) / 2, self.height - ph - 15 * s
+        
+        with self.canvas:
+            Color(0, 0, 0, 0.8)
+            RoundedRectangle(pos=(px, py), size=(pw, ph), radius=[12 * s])
+            
         self._draw_outlined_text(
-            timer_text, self.width / 2, panel_y + panel_h / 2 + 8 * s,
-            font_size=int(34 * s), color=timer_color,
+            f"{minutes:02d}:{seconds:02d}", self.width / 2, py + ph / 2 + 10 * s,
+            font_size=int(48 * s), color=(1, 1, 1, 1),
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        progress = min(1.0, self.game_time / self.GAME_DURATION) if self.GAME_DURATION > 0 else 0
-        diff_level = int(progress * 10) + 1
-        diff_color = (
-            min(1.0, 0.4 + progress * 0.6),
-            max(0.3, 0.9 - progress * 0.6),
-            0.2, 0.9
-        )
-        self._draw_outlined_text(
-            f"Danger Lv.{diff_level}", self.width / 2, panel_y + 8 * s,
-            font_size=int(12 * s), color=diff_color,
-            anchor_x='center', anchor_y='bottom'
-        )
-
     def _draw_combat_info_panel(self, s):
-        panel_w = 190 * s
-        panel_h = 85 * s
-        panel_x = self.width - panel_w - 16 * s
-        panel_y = self.height - panel_h - 16 * s
-        pad = 14 * s
-
-        Color(0.05, 0.05, 0.12, 0.75)
-        RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[10 * s])
-        Color(0.5, 0.35, 0.35, 0.45)
-        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 10 * s), width=1.2)
-
+        pw, ph = 220 * s, 110 * s
+        px, py = self.width - pw - 20 * s, self.height - ph - 20 * s
+        
+        with self.canvas:
+            Color(0, 0, 0, 0.7)
+            RoundedRectangle(pos=(px, py), size=(pw, ph), radius=[10 * s])
+            
         self._draw_outlined_text(
-            f"Kills: {self.kill_count}", panel_x + pad, panel_y + panel_h - 28 * s,
-            font_size=int(18 * s), color=(1, 0.85, 0.3, 1), bold=True
-        )
-        total_enemies = len(self.enemies) + len(self.special_enemies)
-        self._draw_outlined_text(
-            f"Enemies: {total_enemies}", panel_x + pad, panel_y + panel_h - 52 * s,
-            font_size=int(14 * s), color=(0.9, 0.5, 0.4, 0.9)
+            f"KILLS: {self.kill_count}", px + 15 * s, py + ph - 30 * s,
+            font_size=int(26 * s), color=(1, 0.8, 0.2, 1), anchor_x='left', anchor_y='center', bold=True
         )
         self._draw_outlined_text(
-            f"Orbs: {len(self.exp_orbs)}", panel_x + pad, panel_y + panel_h - 72 * s,
-            font_size=int(12 * s), color=(0.4, 0.95, 0.5, 0.8)
-        )
-
-        self._draw_outlined_text(
-            f"Boss Orbs: {len(self.boss_orbs)}", panel_x + pad, panel_y + panel_h - 88 * s,
-            font_size=int(11 * s), color=(0.78, 0.45, 1.0, 0.85)
-        )
-
-        self._draw_outlined_text(
-            f"Passives: AS+ LS+ PR+", panel_x + pad, panel_y + panel_h - 90 * s,
-            font_size=int(10 * s), color=(0.75, 0.85, 0.95, 0.75)
+            f"COINS: {self.coins}", px + 15 * s, py + 25 * s,
+            font_size=int(22 * s), color=(1, 1, 0.5, 1), anchor_x='left', anchor_y='center', bold=True
         )
 
     def _draw_skill_slots(self, s):
-        slot_count = len(self.skill_slots)
-        slot_w = 88 * s
-        slot_h = 88 * s
-        gap = 12 * s
-        total_w = slot_count * slot_w + (slot_count - 1) * gap
-        start_x = (self.width - total_w) / 2
-        y = 18 * s
-
-        for idx, slot in enumerate(self.skill_slots):
-            x = start_x + idx * (slot_w + gap)
-            skill_id = slot["skill_id"]
-
-            Color(0.05, 0.06, 0.1, 0.86)
-            RoundedRectangle(pos=(x, y), size=(slot_w, slot_h), radius=[10 * s])
-
-            is_ready = self._is_skill_ready(skill_id)
-            if is_ready:
-                Color(0.35, 0.75, 0.45, 0.75)
-            else:
-                Color(0.75, 0.35, 0.35, 0.75)
-            Line(rounded_rectangle=(x, y, slot_w, slot_h, 10 * s), width=1.8)
-
-            self._draw_outlined_text(
-                slot["bind"], x + 8 * s, y + slot_h - 22 * s,
-                font_size=int(14 * s), color=(0.95, 0.95, 1, 0.95), bold=True
-            )
-            self._draw_outlined_text(
-                slot["label"], x + slot_w / 2, y + 14 * s,
-                font_size=int(11 * s), color=(0.8, 0.86, 0.95, 0.9),
-                anchor_x='center', anchor_y='bottom'
-            )
-
-            remaining = self._get_skill_remaining(skill_id)
-            if remaining > 0:
-                cooldown = self._get_skill_cooldown(skill_id)
-                ratio = max(0.0, min(1.0, remaining / cooldown)) if cooldown > 0 else 0.0
-                overlay_h = slot_h * ratio
-                Color(0.02, 0.03, 0.05, 0.72)
-                Rectangle(pos=(x, y), size=(slot_w, overlay_h))
-                if skill_id == "ultimate":
-                    display_text = f"{int(math.ceil(remaining))}K"
+        sw, gap = 110 * s, 15 * s
+        tw = 4 * sw + 3 * gap
+        sx, y = (self.width - tw) / 2, 25 * s
+        
+        for i, sl in enumerate(self.skill_slots):
+            x = sx + i * (sw + gap)
+            sid = sl["skill_id"]
+            
+            with self.canvas:
+                Color(0, 0, 0, 0.8)
+                RoundedRectangle(pos=(x, y), size=(sw, sw), radius=[12 * s])
+                
+                ready = self._is_skill_ready(sid)
+                if ready:
+                    Color(0.3, 0.8, 0.4, 1)
                 else:
-                    display_text = f"{remaining:.1f}"
+                    Color(0.8, 0.3, 0.3, 1)
+                Line(rounded_rectangle=(x, y, sw, sw, 12 * s), width=3)
+                
+            self._draw_outlined_text(
+                sl["bind"], x + 10 * s, y + sw - 25 * s,
+                font_size=int(22 * s), color=(1, 1, 1, 1), anchor_x='left', anchor_y='center', bold=True
+            )
+            
+            rem = self._get_skill_remaining(sid)
+            if rem > 0:
+                with self.canvas:
+                    Color(0, 0, 0, 0.6)
+                    Rectangle(pos=(x, y), size=(sw, sw * (rem / self._get_skill_cooldown(sid))))
+                
+                display_text = f"{rem:.1f}" if sid != "ultimate" else f"{int(rem)}K"
                 self._draw_outlined_text(
-                    display_text, x + slot_w / 2, y + slot_h / 2,
-                    font_size=int(22 * s), color=(1, 0.95, 0.95, 0.95),
-                    anchor_x='center', anchor_y='center', bold=True
+                    display_text, x + sw / 2, y + sw / 2,
+                    font_size=int(30 * s), color=(1, 1, 1, 1), anchor_x='center', anchor_y='center', bold=True
                 )
 
     def _update_debug(self, dt: float):
+        """Technical debug info update."""
         if not self.debug_mode:
             self.debug_label.text = ""
-            self.pos_label.text = ""
             return
             
         fps = Clock.get_fps() or 0
-        god_str = "  [GODMODE ON]" if self.god_mode else ""
         info = (
-            f"FPS: {fps:.1f}{god_str}\n"
+            f"FPS: {fps:.1f}\n"
             f"Bullets: {len(self.bullets)}\n"
             f"Enemies: {len(self.enemies)}\n"
             f"Special Enemies: {len(self.special_enemies)}\n"
-            f"Enemy Projectiles: {len(self.enemy_projectiles)}\n"
             f"EXP Orbs: {len(self.exp_orbs)}"
         )
-        if self.debug_mode:
-            active_statuses = getattr(self.player, 'status', None)
-            status_text = "none"
-            if active_statuses:
-                status_dict = active_statuses.to_dict()
-                if status_dict:
-                    status_parts = []
-                    for name, payload in status_dict.items():
-                        status_parts.append(f"{name}({payload['duration']:.1f}s x{payload['stacks']})")
-                    status_text = ", ".join(status_parts)
-
-            info += (
-                f"\nTime Speed: {self.time_speed_multiplier}x"
-                f"\nBalance Preset: {self.balance_status_text}"
-                f"\nSpawn Interval: {self.spawn_interval:.2f}s"
-                f"\nEnemy Speed x: {self.enemy_speed_multiplier:.2f}"
-                f"\nEXP Pull Radius: {self._get_exp_pull_radius():.0f}"
-                f"\nPlayer LV:{self.player.level} EXP:{int(self.player.exp)}/{int(self.player.next_exp)} SP:{self.player.stat_points}"
-                f"\nPlayer HP:{self.player.hp:.0f}/{self.player.max_hp:.0f} Ammo:{getattr(self.player, 'ammo', 0)}/{getattr(self.player, 'max_ammo', 30)} DMG:{self.player.bullet_damage:.1f}"
-                f"\nULT Infinite Ammo: {self.ultimate_infinite_ammo_timer:.1f}s"
-                f"\nUltimate Charge: {self.ultimate_kill_progress}/{self.ultimate_kills_required} kills"
-                f"\nStats STR:{self.player.str} DEX:{self.player.dex} AGI:{self.player.agi} INT:{self.player.int} VIT:{self.player.vit} LUCK:{self.player.luck}"
-                f"\nStatus Effects: {status_text}"
-            )
         self.debug_label.text = info
-        if self.debug_mode:
-            self.pos_label.text = f"Player: ({self.player.x:.1f}, {self.player.y:.1f})"
-            if self.pos_label.texture:
-                self.pos_label.pos = (self.width - self.pos_label.texture.width - 20, self.height - self.pos_label.texture.height - 20)
 
     def _spawn_bullet(self):
         mx, my = Window.mouse_pos
@@ -2246,8 +2175,10 @@ class GameWidget(Widget):
         if raw_direction.length() == 0:
             raw_direction = Vector(self.player.facing, 0)
 
+        # Face left/right based on cursor
         self.player.facing = 1 if raw_direction.x >= 0 else -1
 
+        # Clamp aim to a 160-degree cone around facing direction (±80°)
         aim_angle = math.degrees(math.atan2(raw_direction.y, raw_direction.x))
         if self.player.facing == 1:
             clamped_angle = max(-80.0, min(80.0, aim_angle))
@@ -2360,6 +2291,7 @@ class GameWidget(Widget):
             self.levelup_choices = []
 
     def _draw_levelup_overlay(self):
+        """Draw an enhanced level-up selection overlay with card UI."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
 
         Color(0, 0, 0, 0.6)
@@ -2470,6 +2402,7 @@ class GameWidget(Widget):
         )
 
     def _draw_boss_upgrade_overlay(self):
+        """Boss reward selection overlay (powerful x1.5 upgrade choice)."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
 
         Color(0, 0, 0, 0.68)
@@ -2558,6 +2491,7 @@ class GameWidget(Widget):
         self.bullet_damage = self.player.bullet_damage
         self.fire_rate = self.player.fire_rate
 
+        # Re-apply persistent boss multipliers on top of recalculated base stats
         base_walk_speed = self.player.base_walk_speed + (self.player.agi - 1) * 8
         base_run_speed = self.player.base_run_speed + (self.player.agi - 1) * 10
         self.player.speed = base_walk_speed * self.boss_move_speed_mult
@@ -2569,6 +2503,7 @@ class GameWidget(Widget):
         self.player.hp = max(1.0, min(self.player.max_hp, self.player.max_hp * hp_ratio))
 
     def _resume_auto_fire_if_holding(self):
+        """Resume AUTO fire when reload finishes while left mouse is still held."""
         if not self.left_mouse_held or self.levelup_active or self.player.is_dead:
             return
 
@@ -2824,6 +2759,7 @@ class GameWidget(Widget):
         radius = (300.0 + (self.player.int * 8.0)) * 3.0
         push_power = 220.0 + (self.player.int * 5.0)
 
+        # Trigger visual shockwave effect
         self.shockwave_effects.append(ShockwaveEffect(center, radius))
 
         height = self.height if self.height > 0 else Window.height
@@ -2866,13 +2802,14 @@ class GameWidget(Widget):
         self.player.reload_timer = 0.0
         self.player.ammo = self.player.max_ammo
 
+        # Replaced grenade explosion texture with a custom colored aura for Ultimate
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
                 textures=None,
                 size=max(170.0, visual_radius * 2.5),
                 y_lift_ratio=0.45,
-                color=(0.2, 0.8, 1.0, 0.8)
+                color=(0.2, 0.8, 1.0, 0.8) # Cyan/blue burst
             )
         )
 
@@ -2934,7 +2871,7 @@ class GameWidget(Widget):
                 hit_any = True
                 if enemy_died:
                     self._handle_enemy_kill(enemy)
-                    
+
         if hit_any:
             self.play_sound("enemy_hit")
 
@@ -2945,15 +2882,19 @@ class GameWidget(Widget):
         self.boss_orbs.append(BossOrb(center + offset))
 
     def _update_progression_hud(self):
+        """Progression HUD is now drawn on canvas in _draw_hud_panel. Keep label cleared."""
         self.progression_label.text = ""
 
     def _spawn_enemy(self):
+        """Spawn enemy at random edge (left or right) within the player's walkable band."""
         if len(self.enemies) >= self.MAX_ENEMIES:
             return
 
         spawn_left = random.choice([True, False])
+
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
+
         enemy_width = self.player.size[0]
         x_pos = self._get_enemy_offscreen_x(enemy_width, spawn_left)
 
@@ -2966,18 +2907,22 @@ class GameWidget(Widget):
         self.enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy(self):
+        """Spawn special enemy at random edge. Must not repeat last 2 types spawned."""
         available = [s for s in SpecialEnemyEntity.SKINS if s not in self.last_special_types]
         if not available:
             available = SpecialEnemyEntity.SKINS
 
         selected = random.choice(available)
+
         self.last_special_types.append(selected)
         if len(self.last_special_types) > 2:
             self.last_special_types.pop(0)
 
         spawn_left = random.choice([True, False])
+
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
+
         special_enemy_width = self.player.size[0] * 1.2
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
@@ -2994,9 +2939,12 @@ class GameWidget(Widget):
         self.special_enemies[-1].spawn_order = self.enemy_spawn_counter
 
     def _spawn_special_enemy_by_type(self, enemy_type: str):
+        """Spawn a specific special enemy type at random edge (for debug mode)."""
         spawn_left = random.choice([True, False])
+
         min_y, max_y = self._get_player_walkable_y_range()
         y_pos = random.uniform(min_y, max_y)
+
         special_enemy_width = self.player.size[0] * 1.2
         x_pos = self._get_enemy_offscreen_x(special_enemy_width, spawn_left)
 
