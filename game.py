@@ -316,6 +316,7 @@ class GameWidget(Widget):
 
         self.player = PlayerEntity(pos=Vector(0, 0))
         self._did_initial_player_center = False
+        self._was_reloading_last_frame = False  # Track reload state for sound
         
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
@@ -453,12 +454,6 @@ class GameWidget(Widget):
             self.sounds["bg_music"].volume = 0.5 * self.settings.get("music_volume", 0.7)
             self.sounds["bg_music"].play()
 
-        self._played_game_over = False
-        self._played_game_start = False
-        if initial_state == self.STATE_PLAYING:
-            self.play_sound("game_start")
-            self._played_game_start = True
-
         # Skill runtime state (active skills + hotkey slots)
         self.skill_cooldowns: Dict[str, Dict[str, float]] = {
             "dodge": {"base": 2.2, "remaining": 0.0},
@@ -524,6 +519,12 @@ class GameWidget(Widget):
         self.kill_count = 0
         self.coins = 0
 
+        self._played_game_over = False
+        self._played_game_start = False
+        if initial_state == self.STATE_PLAYING:
+            self.play_sound("game_start")
+            self._played_game_start = True
+
         self._sync_combat_from_player()
         self._spawn_player_at_screen_center()
 
@@ -533,11 +534,9 @@ class GameWidget(Widget):
         """Helper to play sounds dynamically using standard settings."""
         snd = self.sounds.get(name)
         if snd:
-            # If we are starting BG music, stop it first to prevent overlapping
             if name == "bg_music" and snd.state == 'play':
                 snd.stop()
             
-            # For SFX, we also stop to "reset" the sound if it's already playing
             if name != "bg_music" and snd.state == 'play':
                 snd.stop()
             
@@ -552,7 +551,6 @@ class GameWidget(Widget):
         if self._is_cleaned:
             return
         
-        # STOP ALL SOUNDS on cleanup
         for snd in self.sounds.values():
             if snd:
                 snd.stop()
@@ -759,15 +757,15 @@ class GameWidget(Widget):
         if app and hasattr(app, "return_to_main_menu"):
             app.return_to_main_menu()
 
-    def retry_run(self):
-        if self.game_widget:
-            self.game_widget.cleanup() # This stops the old music
-        self.root.clear_widgets()
-        self.game_widget = GameWidget(initial_state="PLAYING")
-        self.root.add_widget(self.game_widget)
-        app = App.get_running_app()
-        if app and hasattr(app, "retry_run"):
-            app.retry_run()
+    def _retry_run(self):
+        if self.parent:
+            self.cleanup()
+            self.parent.clear_widgets()
+            new_widget = GameWidget(initial_state=self.STATE_PLAYING)
+            self.parent.add_widget(new_widget)
+            app = App.get_running_app()
+            if app:
+                app.game_widget = new_widget
 
     def _get_player_walkable_y_range(self):
         """Return the Y range the player can actually walk to."""
@@ -829,6 +827,7 @@ class GameWidget(Widget):
         if key == 'r':
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
+                # Manual reload always triggers sound
                 self.play_sound("reload")
             return True
 
@@ -1029,7 +1028,7 @@ class GameWidget(Widget):
             elif not has_infinite_ammo and getattr(self.player, 'ammo', 0) <= 0:
                 if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                     self.player.start_reload()
-                    self.play_sound("reload")
+                    # Handled in update() dedicated check
             return True
             
         return super().on_touch_down(touch)
@@ -1099,6 +1098,13 @@ class GameWidget(Widget):
         if self.ultimate_infinite_ammo_timer > 0:
             self.ultimate_infinite_ammo_timer = max(0.0, self.ultimate_infinite_ammo_timer - dt)
 
+        # ── Dedicated Instant Reload Sound Check ──
+        # Check if player just started reloading this frame
+        current_reloading = getattr(self.player, 'is_reloading', False)
+        if current_reloading and not self._was_reloading_last_frame:
+            self.play_sound("reload")
+        self._was_reloading_last_frame = current_reloading
+
         if self.game_time < self.GAME_DURATION:
             self.game_time += dt * self.time_speed_multiplier
             if self.game_time > self.GAME_DURATION:
@@ -1129,6 +1135,10 @@ class GameWidget(Widget):
                 
                 self.play_sound("game_over")
                 self._played_game_over = True
+            
+            # Increment the death screen timer
+            self.death_screen_timer += dt
+            
             for enemy in self.enemies[:]:
                 if enemy.is_dying:
                     enemy.update(dt, Vector(0, 0), (self.width, self.height))
@@ -1218,9 +1228,7 @@ class GameWidget(Widget):
                             self.firing = False
                             self.player.stop_shooting()
             else:
-                if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
-                    self.player.start_reload()
-                    self.play_sound("reload")
+                # Reload handled by transition check
                 self.firing = False
                 self.burst_shots_remaining = 0
         
@@ -1819,8 +1827,7 @@ class GameWidget(Widget):
                 panel_y + panel_h - 150 * s,
                 font_size=int(42 * s),
                 color=(0.95, 0.95, 0.96, 0.98),
-                anchor_x='center',
-                anchor_y='center'
+                anchor_x='center', anchor_y='center'
             )
 
             coin_y = (panel_y + panel_h * 0.52) + (50 * s) 
@@ -1831,9 +1838,7 @@ class GameWidget(Widget):
                 coin_y,
                 font_size=int(44 * s),
                 color=(1, 0.88, 0.2, 1),
-                anchor_x='center',
-                anchor_y='center',
-                bold=True,
+                anchor_x='center', anchor_y='center', bold=True,
 )
 
             btn_scale = 2.25 * s
@@ -1870,8 +1875,7 @@ class GameWidget(Widget):
                 star_y - 100 * s,
                 font_size=int(42 * s),
                 color=(0.95, 0.95, 1, 0.98),
-                anchor_x='center',
-                anchor_y='center'
+                anchor_x='center', anchor_y='center'
             )
 
             line_y = star_y - 160 * s
@@ -1885,9 +1889,7 @@ class GameWidget(Widget):
                 coin_y,
                 font_size=int(52 * s),
                 color=(1, 0.88, 0.2, 1),
-                anchor_x='center',
-                anchor_y='center',
-                bold=True,
+                anchor_x='center', anchor_y='center', bold=True,
             )
 
             btn_scale = 2.1 * s
@@ -2544,9 +2546,6 @@ class GameWidget(Widget):
             return
 
         if getattr(self.player, 'ammo', 0) <= 0 and not has_infinite_ammo:
-            if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
-                self.player.start_reload()
-                self.play_sound("reload")
             return
 
         self.firing = True
@@ -2826,14 +2825,14 @@ class GameWidget(Widget):
         self.player.reload_timer = 0.0
         self.player.ammo = self.player.max_ammo
 
-        # Replaced grenade explosion texture with a custom colored aura for Ultimate
+        # Trigger a fiery red burst effect
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
                 textures=None,
                 size=max(170.0, visual_radius * 2.5),
                 y_lift_ratio=0,
-                color=(0.2, 0.8, 1.0, 0.8) # Cyan/blue burst
+                color=(1.0, 0.2, 0.2, 0.8) # Red burst
             )
         )
 
