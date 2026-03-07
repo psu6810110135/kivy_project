@@ -316,7 +316,7 @@ class GameWidget(Widget):
 
         self.player = PlayerEntity(pos=Vector(0, 0))
         self._did_initial_player_center = False
-        self._was_reloading_last_frame = False  # Track reload state for sound
+        self._was_reloading_last_frame = False # Track state for sound
         
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
@@ -534,9 +534,11 @@ class GameWidget(Widget):
         """Helper to play sounds dynamically using standard settings."""
         snd = self.sounds.get(name)
         if snd:
+            # If we are starting BG music, stop it first to prevent overlapping
             if name == "bg_music" and snd.state == 'play':
                 snd.stop()
             
+            # For SFX, we also stop to "reset" the sound if it's already playing
             if name != "bg_music" and snd.state == 'play':
                 snd.stop()
             
@@ -551,6 +553,7 @@ class GameWidget(Widget):
         if self._is_cleaned:
             return
         
+        # STOP ALL SOUNDS on cleanup
         for snd in self.sounds.values():
             if snd:
                 snd.stop()
@@ -827,7 +830,7 @@ class GameWidget(Widget):
         if key == 'r':
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
-                # Manual reload always triggers sound
+                # Manual reload should definitely play sound
                 self.play_sound("reload")
             return True
 
@@ -1028,7 +1031,7 @@ class GameWidget(Widget):
             elif not has_infinite_ammo and getattr(self.player, 'ammo', 0) <= 0:
                 if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                     self.player.start_reload()
-                    # Handled in update() dedicated check
+                    # Handled by state transition
             return True
             
         return super().on_touch_down(touch)
@@ -1098,8 +1101,7 @@ class GameWidget(Widget):
         if self.ultimate_infinite_ammo_timer > 0:
             self.ultimate_infinite_ammo_timer = max(0.0, self.ultimate_infinite_ammo_timer - dt)
 
-        # ── Dedicated Instant Reload Sound Check ──
-        # Check if player just started reloading this frame
+        # ── Dedicated State Check for Reload Sound ──
         current_reloading = getattr(self.player, 'is_reloading', False)
         if current_reloading and not self._was_reloading_last_frame:
             self.play_sound("reload")
@@ -1228,7 +1230,6 @@ class GameWidget(Widget):
                             self.firing = False
                             self.player.stop_shooting()
             else:
-                # Reload handled by transition check
                 self.firing = False
                 self.burst_shots_remaining = 0
         
@@ -2317,10 +2318,10 @@ class GameWidget(Widget):
             self.levelup_choices = []
 
     def _draw_levelup_overlay(self):
-        """Draw an enhanced level-up selection overlay with card UI."""
+        """Draw an enhanced level-up selection overlay with BIGGER and BRIGHTER text."""
         s = self.height / 1080.0 if self.height > 0 else 1.0
 
-        Color(0, 0, 0, 0.6)
+        Color(0, 0, 0, 0.75) # Darken background more
         Rectangle(pos=(0, 0), size=self.size)
 
         panel_w = self.width * 0.55
@@ -2328,53 +2329,34 @@ class GameWidget(Widget):
         panel_x = (self.width - panel_w) / 2
         panel_y = (self.height - panel_h) / 2
 
-        Color(0.08, 0.07, 0.14, 0.95)
+        Color(0.05, 0.04, 0.1, 0.98) # Darker panel
         RoundedRectangle(pos=(panel_x, panel_y), size=(panel_w, panel_h), radius=[20 * s])
-        inner_pad = 4 * s
-        Color(0.12, 0.11, 0.2, 0.9)
-        RoundedRectangle(
-            pos=(panel_x + inner_pad, panel_y + inner_pad),
-            size=(panel_w - inner_pad * 2, panel_h - inner_pad * 2),
-            radius=[16 * s]
-        )
-        Color(0.85, 0.7, 0.2, 0.8)
-        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 20 * s), width=2.5)
+        Color(1, 0.9, 0.2, 0.9)
+        Line(rounded_rectangle=(panel_x, panel_y, panel_w, panel_h, 20 * s), width=3)
 
         title_y = panel_y + panel_h - 55 * s
         self._draw_outlined_text(
             "LEVEL UP!", self.width / 2, title_y,
-            font_size=int(42 * s), color=(1, 0.9, 0.3, 1),
+            font_size=int(56 * s), color=(1, 1, 0, 1), # Bright Yellow
             anchor_x='center', anchor_y='center', bold=True
         )
 
-        subtitle_y = title_y - 35 * s
-        remaining_text = f"({self.pending_levelups} more)" if self.pending_levelups > 0 else ""
-        self._draw_outlined_text(
-            f"Choose your upgrade  {remaining_text}", self.width / 2, subtitle_y,
-            font_size=int(20 * s), color=(0.85, 0.85, 0.9, 0.9),
-            anchor_x='center', anchor_y='center'
-        )
-
-        sep_y = subtitle_y - 20 * s
-        Color(0.5, 0.45, 0.6, 0.4)
-        Line(points=[panel_x + 40 * s, sep_y, panel_x + panel_w - 40 * s, sep_y], width=1)
-
         stat_descriptions = {
-            "str": ("STR", "+1", "Bullet Damage +", (0.95, 0.35, 0.3, 1)),
-            "dex": ("DEX", "+1", "Fire Rate +", (0.3, 0.85, 0.95, 1)),
-            "agi": ("AGI", "+1", "Move Speed +", (0.3, 0.95, 0.45, 1)),
-            "int": ("INT", "+1", "Skill Cooldown -", (0.6, 0.4, 0.95, 1)),
-            "vit": ("VIT", "+1", "Max HP +", (0.95, 0.55, 0.7, 1)),
-            "luck": ("LUCK", "+1", "Crit & Drop +", (0.95, 0.85, 0.2, 1)),
+            "str": ("STRENGTH", "+1", "BULLET DAMAGE UP", (1, 0.2, 0.2, 1)), # Red
+            "dex": ("DEXTERITY", "+1", "FIRE RATE UP", (0.2, 0.9, 1, 1)),   # Cyan
+            "agi": ("AGILITY", "+1", "MOVE SPEED UP", (0.2, 1, 0.4, 1)),    # Green
+            "int": ("INTELLIGENCE", "+1", "COOLDOWN DOWN", (0.8, 0.4, 1, 1)),# Purple
+            "vit": ("VITALITY", "+1", "MAX HEALTH UP", (1, 0.5, 0.8, 1)),   # Pink
+            "luck": ("LUCK", "+1", "CRIT & DROPS UP", (1, 0.9, 0, 1)),     # Gold
         }
 
         card_count = len(self.levelup_choices)
-        card_spacing = 24 * s
+        card_spacing = 30 * s
         total_card_width = panel_w - 80 * s
         card_w = (total_card_width - card_spacing * (card_count - 1)) / max(1, card_count)
-        card_h = panel_h * 0.48
+        card_h = panel_h * 0.55
         card_start_x = panel_x + 40 * s
-        card_y = panel_y + 30 * s
+        card_y = panel_y + 40 * s
 
         for idx, stat_key in enumerate(self.levelup_choices):
             cx = card_start_x + idx * (card_w + card_spacing)
@@ -2382,49 +2364,44 @@ class GameWidget(Widget):
                 stat_key, (stat_key.upper(), "+1", "", (1, 1, 1, 1))
             )
 
-            Color(0.1, 0.1, 0.18, 0.92)
-            RoundedRectangle(pos=(cx, card_y), size=(card_w, card_h), radius=[12 * s])
-            Color(*accent[:3], 0.6)
-            Line(rounded_rectangle=(cx, card_y, card_w, card_h, 12 * s), width=1.8)
+            # Card background
+            Color(0.12, 0.12, 0.22, 0.95)
+            RoundedRectangle(pos=(cx, card_y), size=(card_w, card_h), radius=[15 * s])
+            Color(*accent[:3], 1.0) # Full brightness border
+            Line(rounded_rectangle=(cx, card_y, card_w, card_h, 15 * s), width=2.5)
 
-            key_y = card_y + card_h - 35 * s
-            Color(*accent[:3], 0.15)
-            Ellipse(pos=(cx + card_w / 2 - 18 * s, key_y - 4 * s), size=(36 * s, 36 * s))
+            # --- BIGGER Stat Name ---
             self._draw_outlined_text(
-                f"{idx + 1}", cx + card_w / 2, key_y + 14 * s,
-                font_size=int(22 * s), color=accent,
+                stat_name, cx + card_w / 2, card_y + card_h * 0.78,
+                font_size=int(32 * s), color=accent,
                 anchor_x='center', anchor_y='center', bold=True
             )
 
+            # --- BIGGER Bonus (+1) ---
             self._draw_outlined_text(
-                stat_name, cx + card_w / 2, key_y - 40 * s,
-                font_size=int(28 * s), color=accent,
+                bonus, cx + card_w / 2, card_y + card_h * 0.55,
+                font_size=int(48 * s), color=(1, 1, 1, 1),
                 anchor_x='center', anchor_y='center', bold=True
             )
 
+            # --- BIGGER Description ---
             self._draw_outlined_text(
-                bonus, cx + card_w / 2, key_y - 72 * s,
-                font_size=int(20 * s), color=(0.9, 0.9, 0.9, 0.9),
-                anchor_x='center', anchor_y='center'
-            )
-
-            self._draw_outlined_text(
-                desc, cx + card_w / 2, key_y - 102 * s,
-                font_size=int(14 * s), color=(0.7, 0.7, 0.75, 0.8),
-                anchor_x='center', anchor_y='center'
+                desc, cx + card_w / 2, card_y + card_h * 0.35,
+                font_size=int(20 * s), color=(0.9, 0.9, 0.9, 1),
+                anchor_x='center', anchor_y='center', bold=True
             )
 
             current_val = getattr(self.player, stat_key, 0)
             self._draw_outlined_text(
-                f"Current: {current_val}", cx + card_w / 2, card_y + 20 * s,
-                font_size=int(13 * s), color=(0.6, 0.6, 0.65, 0.7),
+                f"Level: {current_val}", cx + card_w / 2, card_y + 25 * s,
+                font_size=int(18 * s), color=(0.7, 0.7, 0.75, 1),
                 anchor_x='center', anchor_y='bottom'
             )
 
         self._draw_outlined_text(
-            "Click or Press  1  /  2  /  3  to select", self.width / 2, panel_y + 8 * s,
-            font_size=int(16 * s), color=(0.7, 0.7, 0.75, 0.7),
-            anchor_x='center', anchor_y='bottom'
+            "CLICK OR PRESS 1 / 2 / 3", self.width / 2, panel_y + 5 * s,
+            font_size=int(18 * s), color=(1, 1, 1, 0.8),
+            anchor_x='center', anchor_y='bottom', bold=True
         )
 
     def _draw_boss_upgrade_overlay(self):
@@ -2825,14 +2802,14 @@ class GameWidget(Widget):
         self.player.reload_timer = 0.0
         self.player.ammo = self.player.max_ammo
 
-        # Trigger a fiery red burst effect
+        # Trigger a bright fiery red burst effect
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
                 textures=None,
                 size=max(170.0, visual_radius * 2.5),
                 y_lift_ratio=0,
-                color=(1.0, 0.2, 0.2, 0.8) # Red burst
+                color=(1.0, 0.2, 0.2, 0.8) # Bright Red burst
             )
         )
 
