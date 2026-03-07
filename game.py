@@ -533,15 +533,30 @@ class GameWidget(Widget):
         """Helper to play sounds dynamically using standard settings."""
         snd = self.sounds.get(name)
         if snd:
-            if snd.state == 'play':
+            # If we are starting BG music, stop it first to prevent overlapping
+            if name == "bg_music" and snd.state == 'play':
                 snd.stop()
-            if name != "bg_music":
+            
+            # For SFX, we also stop to "reset" the sound if it's already playing
+            if name != "bg_music" and snd.state == 'play':
+                snd.stop()
+            
+            if name == "bg_music":
+                snd.volume = 0.5 * self.settings.get("music_volume", 0.7)
+            else:
                 snd.volume = self.settings.get("sfx_volume", 0.7)
+            
             snd.play()
 
     def cleanup(self):
         if self._is_cleaned:
             return
+        
+        # STOP ALL SOUNDS on cleanup
+        for snd in self.sounds.values():
+            if snd:
+                snd.stop()
+
         if self._scheduled_update is not None:
             self._scheduled_update.cancel()
             self._scheduled_update = None
@@ -744,7 +759,12 @@ class GameWidget(Widget):
         if app and hasattr(app, "return_to_main_menu"):
             app.return_to_main_menu()
 
-    def _retry_run(self):
+    def retry_run(self):
+        if self.game_widget:
+            self.game_widget.cleanup() # This stops the old music
+        self.root.clear_widgets()
+        self.game_widget = GameWidget(initial_state="PLAYING")
+        self.root.add_widget(self.game_widget)
         app = App.get_running_app()
         if app and hasattr(app, "retry_run"):
             app.retry_run()
@@ -1103,9 +1123,12 @@ class GameWidget(Widget):
 
         if self.player.is_dead:
             if not self._played_game_over:
+                # Stop BG music so it doesn't collide with Game Over sound
+                if self.sounds["bg_music"]:
+                    self.sounds["bg_music"].stop()
+                
                 self.play_sound("game_over")
                 self._played_game_over = True
-            self.death_screen_timer += dt
             for enemy in self.enemies[:]:
                 if enemy.is_dying:
                     enemy.update(dt, Vector(0, 0), (self.width, self.height))
@@ -1800,7 +1823,8 @@ class GameWidget(Widget):
                 anchor_y='center'
             )
 
-            coin_y = panel_y + panel_h * 0.48
+            coin_y = (panel_y + panel_h * 0.52) + (50 * s) 
+
             self._draw_outlined_text(
                 f"{int(self.coins)}",
                 self.width * 0.5,
@@ -1810,7 +1834,7 @@ class GameWidget(Widget):
                 anchor_x='center',
                 anchor_y='center',
                 bold=True,
-            )
+)
 
             btn_scale = 2.25 * s
             retry_fallback = (self.width * 0.5 - 190 * s, panel_y + 130 * s, 380 * s, 106 * s)
@@ -2142,7 +2166,7 @@ class GameWidget(Widget):
                     Color(0, 0, 0, 0.6)
                     Rectangle(pos=(x, y), size=(sw, sw * (rem / self._get_skill_cooldown(sid))))
                 
-                display_text = f"{rem:.1f}" if sid != "ultimate" else f"{int(rem)}K"
+                display_text = f"{rem:.1f}" if sid != "ultimate" else f"{int(rem)} Kill"
                 self._draw_outlined_text(
                     display_text, x + sw / 2, y + sw / 2,
                     font_size=int(30 * s), color=(1, 1, 1, 1), anchor_x='center', anchor_y='center', bold=True
@@ -2808,7 +2832,7 @@ class GameWidget(Widget):
                 center,
                 textures=None,
                 size=max(170.0, visual_radius * 2.5),
-                y_lift_ratio=0.45,
+                y_lift_ratio=0,
                 color=(0.2, 0.8, 1.0, 0.8) # Cyan/blue burst
             )
         )
