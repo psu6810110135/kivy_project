@@ -1595,7 +1595,7 @@ class GameWidget(Widget):
             self._draw_label_at(e_info, ehx + ehw / 2, ehy + ehh + 75, (1, 0.7, 0.3, 1))
 
         for se in self.special_enemies:
-            shx, shy, hsw, shh = se.get_hitbox()
+            shx, shy, shw, shh = se.get_hitbox()
             is_atk = getattr(se, 'is_attacking', False)
             se_name = se.asset_path.split('/')[-1]
             se_info = (f"{se_name}  HP:{se.hp}/{se.max_hp}  DMG:{se.damage}  SPD:{se.speed}  AtkSpd:{se.attack_anim_speed:.2f}  ")
