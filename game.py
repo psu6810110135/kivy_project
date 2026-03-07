@@ -316,7 +316,7 @@ class GameWidget(Widget):
 
         self.player = PlayerEntity(pos=Vector(0, 0))
         self._did_initial_player_center = False
-        self._was_reloading_last_frame = False # Track state for sound
+        self._was_reloading_last_frame = False # Track reload state for sound check
         
         # Enemies spawn at left/right edges
         self.enemies: List[EnemyEntity] = []
@@ -761,14 +761,9 @@ class GameWidget(Widget):
             app.return_to_main_menu()
 
     def _retry_run(self):
-        if self.parent:
-            self.cleanup()
-            self.parent.clear_widgets()
-            new_widget = GameWidget(initial_state=self.STATE_PLAYING)
-            self.parent.add_widget(new_widget)
-            app = App.get_running_app()
-            if app:
-                app.game_widget = new_widget
+        app = App.get_running_app()
+        if app and hasattr(app, "retry_run"):
+            app.retry_run()
 
     def _get_player_walkable_y_range(self):
         """Return the Y range the player can actually walk to."""
@@ -830,7 +825,6 @@ class GameWidget(Widget):
         if key == 'r':
             if hasattr(self.player, 'start_reload'):
                 self.player.start_reload()
-                # Manual reload should definitely play sound
                 self.play_sound("reload")
             return True
 
@@ -1031,7 +1025,7 @@ class GameWidget(Widget):
             elif not has_infinite_ammo and getattr(self.player, 'ammo', 0) <= 0:
                 if hasattr(self.player, 'start_reload') and not getattr(self.player, 'is_reloading', False):
                     self.player.start_reload()
-                    # Handled by state transition
+                    # Sound transition handled in update()
             return True
             
         return super().on_touch_down(touch)
@@ -1101,7 +1095,7 @@ class GameWidget(Widget):
         if self.ultimate_infinite_ammo_timer > 0:
             self.ultimate_infinite_ammo_timer = max(0.0, self.ultimate_infinite_ammo_timer - dt)
 
-        # ── Dedicated State Check for Reload Sound ──
+        # ── State Transition Check for Instant Reload Sound ──
         current_reloading = getattr(self.player, 'is_reloading', False)
         if current_reloading and not self._was_reloading_last_frame:
             self.play_sound("reload")
@@ -1601,7 +1595,7 @@ class GameWidget(Widget):
             self._draw_label_at(e_info, ehx + ehw / 2, ehy + ehh + 75, (1, 0.7, 0.3, 1))
 
         for se in self.special_enemies:
-            shx, shy, shw, shh = se.get_hitbox()
+            shx, shy, hsw, shh = se.get_hitbox()
             is_atk = getattr(se, 'is_attacking', False)
             se_name = se.asset_path.split('/')[-1]
             se_info = (f"{se_name}  HP:{se.hp}/{se.max_hp}  DMG:{se.damage}  SPD:{se.speed}  AtkSpd:{se.attack_anim_speed:.2f}  ")
@@ -2802,14 +2796,14 @@ class GameWidget(Widget):
         self.player.reload_timer = 0.0
         self.player.ammo = self.player.max_ammo
 
-        # Trigger a bright fiery red burst effect
+        # Bright red burst for ultimate
         self.explosion_effects.append(
             ExplosionEffect(
                 center,
                 textures=None,
                 size=max(170.0, visual_radius * 2.5),
                 y_lift_ratio=0,
-                color=(1.0, 0.2, 0.2, 0.8) # Bright Red burst
+                color=(1.0, 0.2, 0.2, 0.8) # Bright Red
             )
         )
 
